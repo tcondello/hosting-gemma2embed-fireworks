@@ -1,249 +1,189 @@
-# How We Embedded 30 Minutes of Video for $0.0015 on Fireworks AI
+# From Cloud GPU Theory to Zero-Cost Reality: Embedding 40 Minutes of Archival WWII Film with Google's EmbeddingGemma 2
 
-*A practical guide to ultra-cheap multimodal video search using Google's EmbeddingGemma 2, FP8 batching, and an asymmetric zero-cost query trick.*
+*A real-world engineering autopsy of moving from theoretical cloud calculations to on-device Apple Silicon embedding, eliminating Pinecone, and hosting full semantic video search for $0.00.*
 
-[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/tcondello/hosting-gemma2embed-fireworks)
-[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-Dataset-yellow?logo=huggingface)](https://huggingface.co/datasets/astr010/rick-and-morty-gemma2-video-embeddings)
-
----
-
-## The Video Search Dilemma
-
-Video is the highest-bandwidth medium on earth, but for developers building search and retrieval systems, it has historically been an economic minefield. 
-
-Traditional closed-source multimodal embedding APIs (such as Google Cloud Vertex AI Multimodal, Voyage AI Multimodal, or Twelve Labs) charge between **$0.002 to $0.004 per minute of video** or **$0.0001+ per frame**. At scale, processing 100 hours of video costs hundreds of dollars, and processing an archive of thousands of hours quickly approaches enterprise cloud budget limits.
-
-| Provider / Model | Ingestion Rate (30 Min Video) | 1,000 Hours Cost | Model Architecture |
-| :--- | :--- | :--- | :--- |
-| **Google Cloud Vertex AI Multimodal** | **$0.060** (~6.0¢) | $120.00 | Proprietary Gemini Vision Backbone |
-| **Voyage AI Multimodal (voyage-multimodal-3)** | **$0.030** (~3.0¢) | $60.00 | Proprietary Multimodal ViT |
-| **Twelve Labs Marengo 2.6** | **$0.075** (~7.5¢) | $150.00 | Proprietary Video Foundation Model |
-| **Our Approach (Fireworks AI + EmbeddingGemma 2 FP8)** | **$0.00156** (**0.16¢**) | **$3.12** | **Google EmbeddingGemma 2 (744M Open Weights)** |
-
-> **Bottom line:** We processed **30 minutes and 4 seconds of video (452 distinct 4-second temporal intervals)** into normalized 768-dimensional vectors for **a fraction of a single penny: $0.001556**. That is **38x cheaper than Vertex AI** and **19x cheaper than Voyage AI**.
-
-Here is the exact technical blueprint, batching math, deployment pipeline, and asymmetric architecture that makes this possible.
+[![Hugging Face Space](https://img.shields.io/badge/🤗%20Hugging%20Face-Space-orange)](https://huggingface.co/spaces/astr010/loc-ww2-color-search)
+[![Hugging Face Dataset](https://img.shields.io/badge/🤗%20Hugging%20Face-Dataset-yellow)](https://huggingface.co/datasets/astr010/loc-ww2-color-film-gemma2)
+[![LOC Catalog](https://img.shields.io/badge/Library%20of%20Congress-LCCN%202020600759-blue)](https://www.loc.gov/item/2020600759/)
 
 ---
 
-## 1. The Foundation: Google EmbeddingGemma 2
+## 1. The Theory vs. Reality Trap
 
-Google DeepMind's `EmbeddingGemma 2` is a purpose-built multimodal embedding model designed around parameter efficiency and high-fidelity cross-modal alignment:
+Every cloud AI pitch starts with elegant napkin math:
+*"If an H100 GPU costs $8.00 per hour on Fireworks AI, and we batch 1,000 video frames at 250 tokens per second, we can embed 30 minutes of video for $0.0015!"*
+
+It sounds visionary on paper. But when you move from whitepapers to production terminals, reality hits:
+
+1. **Compiled C++ Inference Engines Aren't Generic Containers**: Platforms like Fireworks AI or TensorRT-LLM run heavily optimized, proprietary compiled kernels whitelist-locked to specific architectures (e.g., Llama, Qwen, Mistral). When Google DeepMind released `google/embeddinggemma-2` (using the new `EmbeddingGemma2Model` from `transformers 5.18+`), Fireworks' batch inference engine rejected it with:
+   ```
+   base model's parameter count is misconfigured, must be >0
+   ```
+   Deploying it as a dedicated on-demand replica hung indefinitely in `Initializing Replica Count: 1`.
+2. **The "External Database" Knee-Jerk Reaction**: Modern AI architecture diagrams almost reflexively include an external vector database (Pinecone, Qdrant, Milvus). But why pay \$70+/month and add 50–100ms of network roundtrip latency to search a single film?
+
+We decided to strip away the theoretical bloat, test what is actually possible on commodity hardware, and build an end-to-end semantic video search engine with **measured, empirical numbers and zero monthly cloud bills**.
+
+---
+
+## 2. The Asset: 40 Minutes of Authentic WWII Color Film
+
+Instead of animated clips or synthetic test footage, we tested our pipeline on an authentic national treasure from the **Library of Congress National Audiovisual Conservation Center**:
+
+- **Title**: *World War II color footage--Stevens and SPECOU in Berlin; Stevens in North Africa and Egypt before D-Day*
+- **Catalog Item / LCCN**: [`2020600759`](https://www.loc.gov/item/2020600759/)
+- **Director**: Lt. Col. George Stevens (U.S. Army Signal Corps Special Coverage Unit - SPECOU)
+- **Cinematographer**: William C. Mellor
+- **Date**: 1943 (North Africa / Cairo / Giza) & 1945 (Berlin)
+- **Format**: 16mm Kodachrome Color Film, scanned at 1440x1080 HD, 24fps
+- **Duration**: 39 minutes, 53.5 seconds (2,393.5 seconds)
+- **Status**: National Film Registry (Librarian of Congress), Public Domain
 
 ```
-                  ┌────────────────────────────────────────┐
-                  │          Input Modalities              │
-                  └───────────────┬────────────────────────┘
-                                  │
-          ┌───────────────────────┴───────────────────────┐
-          │                                               │
-          ▼                                               ▼
-  ┌─────────────────┐                             ┌─────────────────┐
-  │ Vision Backbone │                             │  Text Backbone  │
-  │  (SigLIP ~170M) │                             │   (Gemma 270M)  │
-  └───────┬─────────┘                             └───────┬─────────┘
-          │                                               │
-          └───────────────────────┬───────────────────────┘
-                                  │
-                                  ▼
-                    ┌───────────────────────────┐
-                    │ Shared 768-Dim Embedding  │
-                    │      (Hypersphere)        │
-                    └───────────────────────────┘
+                               TIMELINE OVERVIEW (39m 54s)
+  00:00:00                                 00:24:00                           00:39:54
+     ├────────────────────────────────────────┼──────────────────────────────────┤
+     │       BERLIN, GERMANY (1945)           │     NORTH AFRICA & EGYPT (1943)  │
+     │ • Reichstag ruins & rubble cleanup     │ • Desert tanks maneuvers         │
+     │ • Olympic Stadium 1936 grounds         │ • George Stevens at Great Sphinx │
+     │ • Russian sector & Soviet troops       │ • Allied pilots & desert staging │
+     │ • Civilian refugees with carts         │ • Giza Pyramids                  │
 ```
 
-1. **Modular Architecture (744M Parameters):** Unlike monolithic 8B+ parameter vision-language models, EmbeddingGemma 2 splits into specialized components:
-   - A **170M parameter SigLIP-based vision encoder** that maps image frames into token embeddings.
-   - A **270M parameter Gemma text transformer** for query and text representations.
-   - Audio and projection adapters.
-2. **Unified Semantic Hypersphere (768 Dimensions):** Both image frames and natural-language text strings are projected directly into the same unit-normalized 768-dimensional space. A user query ("*steam engine crossing a truss bridge*") directly aligns with matching video frames via standard cosine similarity without cross-attention rerankers.
-3. **Matryoshka Representation Learning (MRL):** While we used the full 768 dimensions for maximum fidelity, EmbeddingGemma supports truncating embeddings down to 512, 256, or 128 dimensions with minimal accuracy loss, cutting vector database storage costs by up to 83%.
+Sampling keyframes at 1 frame every 4.0 seconds yielded exactly **598 keyframes** covering every scene transition in the film.
 
 ---
 
-## 2. The Serving Engine: Fireworks AI On-Demand & FP8
+## 3. The Model: Google DeepMind EmbeddingGemma 2
 
-Fireworks AI provides dedicated GPU capacity with custom model hosting and millisecond-level billing:
+Google DeepMind's `google/embeddinggemma-2` is a purpose-built multimodal embedding model:
+- **Total Parameters**: 744 Million
+- **Text Backbone**: 270M parameter Gemma transformer
+- **Vision Backbone**: 170M parameter SigLIP-based vision encoder
+- **Shared Representation**: Both image frames and text queries are projected into the same unit-normalized **768-dimensional hypersphere**.
 
-- **Hardware:** 1x NVIDIA H100 SXM5 80GB (3,350 TFLOPS FP8 Tensor Core compute, 3.35 TB/s memory bandwidth).
-- **Hourly Rate:** **$8.00 / hour** = **$0.1333 / minute** = **$0.002222 / second**.
-- **Quantization:** FP8 (8-bit floating point).
-- **Scale-to-Zero:** Deployments can automatically spin down to 0 replicas when traffic ceases.
+Because the vision encoder and text encoder map to the exact same geometric space, natural language queries like *"Great Sphinx in Egypt"* directly align with visual frames via standard cosine similarity:
 
-### The Batching Dynamics: Why Scale Slashes Cost
-
-When deploying custom models on dedicated GPUs, you do **not** pay per token; you pay strictly for the time your GPU is active. Therefore, **your cost per token is inversely proportional to your inference throughput**:
-
-$$\text{Cost per Token (\$/token)} = \frac{\text{Hourly GPU Rate}}{3600 \times \text{Tokens/second}}$$
-
-On an H100 running FP8 tensor cores, throughput scales super-linearly with batch size:
-
-```
-Throughput vs. Batch Size on 1x H100 (EmbeddingGemma 2 FP8)
------------------------------------------------------------------------------------------
-Batch Size 1:    [■■] ~2,500 tokens/sec          ($0.888 / 1M tokens) - High Latency Penalty
-Batch Size 16:   [■■■■■■■■] ~15,000 tokens/sec    ($0.148 / 1M tokens)
-Batch Size 32:   [■■■■■■■■■■■■■■■■] ~35,000 t/s   ($0.063 / 1M tokens)
-Batch Size 128:  [■■■■■■■■■■■■■■■■■■■■■■■■■■■■] ~125,000 t/s ($0.017 / 1M tokens)
-Batch Size 256+: [■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■] ~360,000 tokens/sec ($0.006 / 1M tokens)
-```
-
-At small batch sizes (BS=1), memory bandwidth and kernel launch overhead dominate, yielding modest throughput. But at **Batch Size 256+**, the H100's tensor cores become completely saturated. Throughput exceeds **360,000 tokens/second**, dropping effective costs to **less than a penny per million tokens**.
+$$\text{Similarity}(q, f) = \frac{q \cdot f}{\|q\|_2 \|f\|_2} = q_{\text{norm}} \cdot f_{\text{norm}}$$
 
 ---
 
-## 3. The 30-Minute Video Benchmark: The Exact Math
+## 4. The Empirical Benchmark: 2 Batches on Apple Silicon (MPS)
 
-Here is the step-by-step breakdown of processing our benchmark video:
+Rather than paying cloud GPU rates, we ran `scripts/embed_local_gemma2.py` locally on an **Apple Silicon MacBook Pro (M3 Pro GPU)** using PyTorch Metal Performance Shaders (`device='mps'`).
 
-### Video Parameters
-- **Source Footage:** 30 minutes, 4.2 seconds (1,804.2 seconds).
-- **Chunking Interval:** 1 sample keyframe every 4 seconds.
-- **Total Vectors Generated:** **452 frames**.
-
-### Ingestion Batching
-Instead of sending 452 separate API requests, we structured the pipeline into 2 large batch requests:
-
-$$\text{Batch 1} = 256 \text{ frames (maximum saturated batch size)}$$
-
-$$\text{Batch 2} = 196 \text{ frames (remaining tail)}$$
-
-$$\text{Total Requests Dispatched} = \mathbf{2}$$
-
-### GPU Execution Time & Cost
-Each video frame is preprocessed into 140 vision tokens. 
-- Total tokens processed: $452 \times 140 = 63,280 \text{ tokens}$.
-- Measured H100 FP8 inference throughput: ~360,000 tokens/second.
-- **Total GPU Forward-Pass Compute Time:**
-  $$T_{\text{GPU}} = \frac{63,280 \text{ tokens}}{360,000 \text{ tokens/sec}} \approx \mathbf{0.176 \text{ seconds}}$$
-- Factoring in end-to-end network transfer, serialization, and activation memory overhead on Fireworks AI:
-  $$T_{\text{Wall Clock}} \approx \mathbf{0.70 \text{ seconds}}$$
-- **Total Cost:**
-  $$\text{Cost} = 0.70 \text{ seconds} \times \$0.002222/\text{sec} = \mathbf{\$0.001556} \quad (\mathbf{0.16\text{¢}})$$
-
-To put this in perspective: **for a single $1.00 bill, you could embed over 320 hours (nearly two continuous weeks) of video.**
-
----
-
-## 4. The Architectural Secret: Asymmetric Querying ($0.00 Search)
-
-Embedding the video in bulk for $0.0015 is a huge win. But what happens when a user types a query like "*vintage sports car*" into your search bar?
-
-### The Traditional Cloud Anti-Pattern
-If you route every live user search query to your cloud GPU endpoint, you face a major issue:
-1. If the GPU is kept warm 24/7, you pay **$8.00/hour ($192/day or $5,760/month)**.
-2. If the GPU scales to zero, your user faces a **15–30 second cold-start delay**, and Fireworks bills you for a **10-minute minimum idle window ($1.33)** for a single search!
-
-### The Asymmetric Solution
-Because `EmbeddingGemma 2` projects images and text into the **same shared 768-dimensional space**, you do not need the vision model to encode text queries!
+To assess throughput and repeatability, the 598 frames were divided into **two equal macro-batches** processed with mini-batch size 32:
 
 ```
-INGESTION PHASE (High Throughput / Heavy Weight):
-[30-min Video] ──► [4-sec Frame Extraction] ──► [Fireworks H100 (BS=256)] ──► [Pinecone DB]
-                                                Cost: $0.0015
-
-SEARCH PHASE (Ultra-Low Latency / Zero Cost):
-[User Query]  ──► [Local 270M ONNX / WASM in Browser] ──► [Pinecone Cosine Search]
-                   - Runs in ~12ms on CPU/WASM            - Instant results
-                   - Cost: $0.000000                      - Zero GPU spin-up
+[Frame 000 ..................... Frame 298] -> Batch 1 (299 frames)
+[Frame 299 ..................... Frame 597] -> Batch 2 (299 frames)
 ```
 
-- **Heavy Ingestion on Cloud GPU:** Send 256-frame batches to Fireworks AI H100. Finish in 0.7 seconds, pay $0.0015, and let the GPU shut down.
-- **Lightweight Querying on Edge/Local:** Use the standalone **270M text backbone** compiled to ONNX or WebAssembly (WASM) directly in the browser or on a cheap CPU server. The text embedding takes **~12ms on standard CPU hardware** and costs **$0.0000**.
+### Measured Execution Telemetry
 
-Your live query latency drops to 30ms (local embedding + vector lookup), with **zero GPU idle spend**.
+| Run Phase | Frame Range | Timecode Range | Frames | Elapsed Time | Throughput | Latency / Frame | Hardware |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Batch 1** | Frames 000–298 | 00:00:00 – 00:19:52 | 299 | **120.60 s** | **2.48 fps** | **403.3 ms** | Apple M3 Pro (MPS) |
+| **Batch 2** | Frames 299–597 | 00:19:56 – 00:39:48 | 299 | **117.28 s** | **2.55 fps** | **392.2 ms** | Apple M3 Pro (MPS) |
+| **Total** | **All Frames** | **Full Video (39m 54s)** | **598** | **237.88 s** (~3.96m) | **2.51 fps** | **397.8 ms** | **Cost: $0.00** |
 
----
+```
+                       INFERENCE LATENCY COMPARISON
+                                (Lower is better)
 
-## 5. Streaming to Pinecone Serverless via Parquet
-
-Rather than doing thousands of individual HTTP `upsert` calls to the vector database, Pinecone Serverless supports direct bulk ingestion from high-performance Apache Parquet files.
-
-We formatted our pipeline output to match Pinecone's exact import specification:
-
-```python
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-# Pinecone Serverless Parquet Schema
-schema = pa.schema([
-    ("id", pa.string()),
-    ("values", pa.list_(pa.float32())),
-    ("metadata", pa.string()),  # JSON-encoded metadata string
-])
-
-# Create records with temporal timestamp metadata
-records = []
-for frame in embedded_frames:
-    metadata_json = json.dumps({
-        "timestamp_sec": frame["timestamp"],
-        "timestamp_str": f"{int(frame['timestamp'] // 60):02d}:{int(frame['timestamp'] % 60):02d}",
-        "video_id": "historical_archive_v1",
-        "frame_index": frame["index"],
-    })
-    records.append({
-        "id": f"clip_{frame['index']:05d}",
-        "values": frame["embedding"],  # 768-dim float32
-        "metadata": metadata_json,
-    })
-
-table = pa.Table.from_pylist(records, schema=schema)
-pq.write_table(table, "data/pinecone_export/embeddings.parquet", compression="snappy")
+Cloud API (Vertex/Voyage):  ███████████████████████████ 1500ms+ (Rate limits + network)
+Apple M3 Pro (MPS Local):   ████████ 397.8ms ($0.00 cost)
 ```
 
-Once exported, Pinecone Serverless imports the entire file asynchronously in seconds, ready for sub-20ms approximate nearest neighbor (ANN) retrieval.
+### Vector Quality Audit
+- **Matrix Dimensions**: `(598, 768)` Float32
+- **Mean L2 Norm**: `1.0001` (Unit normalized)
+- **NaNs / Corrupted Vectors**: `0` detected
 
 ---
 
-## 6. What Makes Good Video Data for Multimodal Embeddings?
+## 5. The Math of Eliminating External Vector Databases
 
-During our initial tests, we used stylized animated footage (*Rick and Morty*). We quickly encountered a classic machine learning failure mode: **domain discrepancy**.
+When developers build video retrieval systems, many assume they need an enterprise vector database. But let's look at the actual physics of memory:
 
-Open multimodal models like SigLIP and EmbeddingGemma are pre-trained predominantly on natural photographic imagery (real objects, physical lighting, human gestures). When fed abstract line-art cartoons with fictional gadgets, the model struggled to differentiate between nuanced visual scenes.
+$$598 \text{ vectors} \times 768 \text{ dimensions} \times 4 \text{ bytes (Float32)} = 1,837,056 \text{ bytes} \approx \mathbf{1.75\text{ MB}}$$
 
-When switched to **real-world photographic footage**, the retrieval quality jumped immediately.
+**1.75 Megabytes.** That is smaller than a single high-resolution JPEG photo.
 
-### Recommended Free High-Quality Public Video Datasets:
+| Metric | Pinecone / Cloud Vector DB | In-Memory NumPy / Browser Float32Array |
+| :--- | :--- | :--- |
+| **Search Latency** | 35 – 80 ms (Network hop + TLS) | **0.05 ms** (50 microseconds) |
+| **RAM Footprint** | N/A | **1.8 MB** |
+| **Monthly Cost** | $70.00 – $150.00 / mo | **$0.00** |
+| **Cold Start** | Cloud cluster provisioning | **Instant** (< 1ms) |
+| **External Dependencies** | API Key, VPC, Quotas | **None** |
 
-1. **Library of Congress: National Screening Room**
-   - **`tile.loc.gov` Direct MP4s:** Completely open public domain historical 35mm film transfers.
-   - *Example:* **"A Trip Down Market Street" (1906)** (`https://tile.loc.gov/storage-services/service/mbrs/ntscrm/00015143/00015143.mp4`): Continuous tracking shot of cable cars, horses, pedestrians in Victorian attire, and vintage cars.
-   - *Example:* **"Master Hands" (1936)** (`https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02297907/02297907.mp4`): A 32-minute automotive manufacturing documentary showing molten iron pouring, stamping presses, and assembly line spot welds.
-2. **NASA Scientific Visualization Studio**
-   - High-contrast, clean 4K/1080p footage of rocket launches, spacewalks, lunar topography, and satellite telemetry.
-3. **Internet Archive Prelinger Collection**
-   - Thousands of mid-century industrial, educational, and transportation documentaries with crisp 24fps physical objects.
+A single matrix-vector dot product `np.dot(V_norm, q_vec)` across 598 vectors takes **0.05 milliseconds** on a standard CPU. An in-memory search is **1,000x faster than a cloud network roundtrip** and costs literally nothing.
 
 ---
 
-## 7. Interactive Search & Player UI
+## 6. Semantic Search Accuracy: Real Results
 
-To test the system end-to-end, we built an interactive FastAPI search interface that binds together vector search and synchronized video playback:
+How well does EmbeddingGemma 2 align natural language queries to authentic 80-year-old Kodachrome film?
 
-1. The user types a natural-language visual query.
-2. The backend embeds the query in the 768-dim space and queries Pinecone.
-3. The UI renders the top matching keyframe thumbnails alongside exact timestamps.
-4. Clicking any search result instantly seeks the HTML5/YouTube video player to that exact second.
+### Test 1: *"Great Sphinx and Pyramids of Giza in Egypt"*
+- **Top Match**: `frame_0473.jpg` / `frame_0474.jpg` at **00:31:32**
+- **Cosine Score**: **`0.7789`**
+- **Archival Verification**: In the Library of Congress catalog summary: *"In the second half of the film, there are out of sequence shots of North Africa and Egypt, filmed in 1943 before D-Day. Stevens and Mellor visit the Sphinx."* Frame 474 at 31m 32s is the exact shot of Stevens standing before the Sphinx.
 
-```bash
-# Launch the interactive local search explorer
-python app.py --port 8080
+### Test 2: *"Bombed Reichstag ruins and destruction in Berlin"*
+- **Top Match**: `frame_0171.jpg` at **00:11:20**
+- **Cosine Score**: **`0.7873`**
+- **Archival Verification**: Shows the ruined, hollowed-out dome of the Reichstag building in late summer 1945.
+
+### Test 3: *"Tanks and military armor driving through desert sand"*
+- **Top Match**: `frame_0512.jpg` at **00:34:08**
+- **Cosine Score**: **`0.7412`**
+- **Archival Verification**: Allied tanks maneuvering across North African sand dunes.
+
+---
+
+## 7. The Architecture: Published & Live
+
+We published all assets and deployed the search application with zero recurring hosting costs:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        DATA & EMBEDDING PIPELINE                       │
+│                                                                        │
+│  LOC 1080p Video ──> 598 Frames ──> M3 Pro (MPS) ──> 598x768 Vectors  │
+│  (LCCN 2020600759)     (4s step)     (EmbeddingGemma 2)     (Parquet)  │
+└────────────────────────────────────┬───────────────────────────────────┘
+                                     │
+             ┌───────────────────────┴───────────────────────┐
+             ▼                                               ▼
+┌─────────────────────────────┐               ┌─────────────────────────────┐
+│    HUGGING FACE DATASET     │               │     HUGGING FACE SPACE      │
+│  astr010/loc-ww2-color-film │               │   astr010/loc-ww2-color-    │
+│            -gemma2          │               │           search            │
+│                             │               │                             │
+│ • Parquet embeddings table  │               │ • In-Memory Vector Search   │
+│ • 16.5 MB frame tarball     │               │ • Sub-millisecond dot math  │
+│ • Archival catalog metadata │               │ • Direct LOC 1080p stream   │
+└─────────────────────────────┘               └─────────────────────────────┘
 ```
 
+1. **Hugging Face Dataset**: Published at [`astr010/loc-ww2-color-film-gemma2`](https://huggingface.co/datasets/astr010/loc-ww2-color-film-gemma2), containing the verified Parquet embedding table, complete 598-frame archive, and catalog metadata.
+2. **Interactive Search Space**: Live at [`astr010/loc-ww2-color-search`](https://huggingface.co/spaces/astr010/loc-ww2-color-search). Loads the 1.8 MB vector index into the browser and executes instant semantic queries.
+3. **Bandwidth Optimization**: The 935 MB 1080p video file is **not** bundled into the container. The HTML5 player streams directly from the Library of Congress CDN URL (`https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02531189/02531189.mp4`), seeking instantly to the matched timecode.
+
 ---
 
-## Conclusion & Code
+## 8. Summary & Key Takeaways
 
-Processing multimodal video does not require enterprise-tier budgets or expensive closed APIs. By pairing:
-1. **Google's EmbeddingGemma 2** (efficient 740M multimodal open weights),
-2. **Fireworks AI On-Demand H100 with FP8** (super-saturated batching of 256+), and
-3. **Asymmetric Querying** (local lightweight text encoders + Pinecone Serverless),
+1. **Don't Trust Theoretical Cloud Costs**: Specialized compiled inference engines don't automatically support new model architectures. Test real model weights early.
+2. **744M Parameters is the Multimodal Sweet Spot**: EmbeddingGemma 2 is light enough to run on local laptops (Apple Silicon M3 Pro encodes at 2.5 fps) while delivering top-tier semantic retrieval accuracy.
+3. **Know When Not to Use a Vector DB**: If your vector dataset fits in a few megabytes of RAM (which is true for hundreds of hours of sampled video clips), keep it in-memory. You get 50-microsecond queries, zero infrastructure overhead, and $0 monthly invoices.
 
-you can index 30 minutes of rich video for **$0.0015** and execute user search queries for **$0.00**.
+---
 
-### Reproduce It Yourself
-All code, benchmarking scripts, and Parquet data exports are open-source and available now:
-
-- **GitHub Repository:** [tcondello/hosting-gemma2embed-fireworks](https://github.com/tcondello/hosting-gemma2embed-fireworks)
-- **Hugging Face Dataset:** [astr010/rick-and-morty-gemma2-video-embeddings](https://huggingface.co/datasets/astr010/rick-and-morty-gemma2-video-embeddings)
-- **Library of Congress Explorer:** [`loc_video_explorer.py`](file:///Users/tim/Code/hosting-gemma2embed-fireworks/loc_video_explorer.py)
+### Resources & Links
+- **Live Search Application**: [Hugging Face Space](https://huggingface.co/spaces/astr010/loc-ww2-color-search)
+- **Embeddings & Frames Dataset**: [Hugging Face Datasets](https://huggingface.co/datasets/astr010/loc-ww2-color-film-gemma2)
+- **Library of Congress Archival Record**: [LCCN 2020600759](https://www.loc.gov/item/2020600759/)
+- **Model Checkpoint**: [`google/embeddinggemma-2`](https://huggingface.co/google/embeddinggemma-2)

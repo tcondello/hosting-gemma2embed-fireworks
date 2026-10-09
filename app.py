@@ -1,66 +1,146 @@
 """
 FastAPI Server & Video Search UI for Library of Congress WWII Color Film Archive.
-Connects Pinecone Serverless Index namespace 'loc-ww2-color' (598 vectors)
-with dense 768-dim embeddings, local frame visualization, HTML5 video streaming with timestamp seeking,
-and comprehensive Library of Congress archival & technical video metadata.
+Powered by Google DeepMind EmbeddingGemma 2 (744M parameters) multimodal embeddings,
+running 100% self-contained with in-memory NumPy cosine similarity search (zero external vector database, zero API keys),
+and streaming 1440x1080 HD archival video directly from the Library of Congress.
 """
 
-import base64
 import json
 import os
+import tarfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+import pandas as pd
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from openai import OpenAI
-from pinecone import Pinecone
+from huggingface_hub import hf_hub_download
+from sentence_transformers import SentenceTransformer
 
-# --- CONFIGURATION (Loaded from Environment or .env) ---
-def load_env_file():
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        with open(env_path) as f:
-            for line in f:
-                if "=" in line and not line.startswith("#"):
-                    k, v = line.strip().split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
-
-load_env_file()
-
-PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-FIREWORKS_API_KEY = os.environ.get("FIREWORKS_API_KEY")
-INDEX_NAME = os.environ.get("INDEX_NAME", "rick-morty-gemma2-video")
-NAMESPACE = "loc-ww2-color"
-
+# --- DIRECTORIES & ASSET CONFIGURATION ---
 BASE_DIR = Path(__file__).parent
-WW2_FRAMES_DIR = BASE_DIR / "data" / "loc_ww2_frames"
-WW2_VIDEO_FILE = BASE_DIR / "data" / "videos" / "ww2_color_stevens_2020600759.mp4"
-METADATA_FILE = BASE_DIR / "data" / "video_metadata_2020600759.json"
+DATA_DIR = BASE_DIR / "data"
+FRAMES_DIR = DATA_DIR / "loc_ww2_frames"
+LOCAL_VIDEO_FILE = DATA_DIR / "videos" / "ww2_color_stevens_2020600759.mp4"
+METADATA_FILE = DATA_DIR / "video_metadata_2020600759.json"
+EMBEDDINGS_FILE = DATA_DIR / "loc_ww2_color_embeddings.parquet"
+FRAMES_TARBALL = DATA_DIR / "loc_ww2_frames.tar.gz"
 
-if not PINECONE_API_KEY:
-    raise RuntimeError("Missing PINECONE_API_KEY in environment or .env file.")
+HF_DATASET_REPO = "astr010/loc-ww2-color-film-gemma2"
+LOC_CDN_STREAM_URL = "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02531189/02531189.mp4"
 
-# Load structured video metadata
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_data_assets():
+    """Ensures embeddings, metadata, and frames exist locally, downloading from HF Dataset if needed."""
+    # 1. Video Metadata
+    if not METADATA_FILE.exists():
+        try:
+            print(f"[*] Downloading metadata from Hugging Face ({HF_DATASET_REPO})...")
+            dl_path = hf_hub_download(
+                repo_id=HF_DATASET_REPO,
+                filename="metadata/video_metadata_2020600759.json",
+                repo_type="dataset",
+            )
+            with open(dl_path, "r") as f_in, open(METADATA_FILE, "w") as f_out:
+                f_out.write(f_in.read())
+            print("[+] Video metadata downloaded.")
+        except Exception as e:
+            print(f"[!] Warning downloading metadata: {e}")
+
+    # 2. Parquet Embeddings
+    if not EMBEDDINGS_FILE.exists():
+        try:
+            print(f"[*] Downloading embeddings from Hugging Face ({HF_DATASET_REPO})...")
+            dl_path = hf_hub_download(
+                repo_id=HF_DATASET_REPO,
+                filename="loc_ww2_color_embeddings.parquet",
+                repo_type="dataset",
+            )
+            with open(dl_path, "rb") as f_in, open(EMBEDDINGS_FILE, "wb") as f_out:
+                f_out.write(f_in.read())
+            print("[+] Parquet embeddings downloaded.")
+        except Exception as e:
+            print(f"[!] Warning downloading embeddings: {e}")
+
+    # 3. Keyframes Archive
+    existing_frames = list(FRAMES_DIR.glob("*.jpg"))
+    if len(existing_frames) < 500:
+        if FRAMES_TARBALL.exists():
+            print(f"[*] Extracting existing tarball: {FRAMES_TARBALL}...")
+            with tarfile.open(FRAMES_TARBALL, "r:gz") as tar:
+                tar.extractall(path=DATA_DIR)
+        else:
+            try:
+                print(f"[*] Downloading frames archive from Hugging Face ({HF_DATASET_REPO})...")
+                dl_tar = hf_hub_download(
+                    repo_id=HF_DATASET_REPO,
+                    filename="assets/loc_ww2_frames.tar.gz",
+                    repo_type="dataset",
+                )
+                with tarfile.open(dl_tar, "r:gz") as tar:
+                    tar.extractall(path=DATA_DIR)
+            except Exception as e:
+                print(f"[!] Warning extracting frames archive: {e}")
+        print(f"[+] Total keyframes ready: {len(list(FRAMES_DIR.glob('*.jpg')))}")
+
+
+ensure_data_assets()
+
+# --- LOAD METADATA & PARQUET EMBEDDINGS ---
 VIDEO_METADATA: Dict[str, Any] = {}
 if METADATA_FILE.exists():
-    with open(METADATA_FILE) as f:
+    with open(METADATA_FILE, "r") as f:
         VIDEO_METADATA = json.load(f)
 
-# Initialize Clients
-pc = Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(INDEX_NAME)
+if not EMBEDDINGS_FILE.exists():
+    raise RuntimeError(f"Embeddings file {EMBEDDINGS_FILE} could not be loaded or downloaded.")
 
-openai_client = None
-if OPENAI_API_KEY:
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+print(f"[*] Loading embeddings table from {EMBEDDINGS_FILE}...")
+df_embeddings = pd.read_parquet(EMBEDDINGS_FILE)
+raw_matrix = np.array(df_embeddings["values"].tolist(), dtype=np.float32)
 
-app = FastAPI(title="Library of Congress WWII Color Footage - Semantic Video Search")
+# L2-normalize vectors so cosine similarity is a fast single matrix-vector dot product
+row_norms = np.linalg.norm(raw_matrix, axis=1, keepdims=True)
+V_NORM = raw_matrix / np.maximum(row_norms, 1e-9)
+
+METADATA_ROWS: List[Dict[str, Any]] = [
+    json.loads(meta_str) if isinstance(meta_str, str) else meta_str
+    for meta_str in df_embeddings["metadata"]
+]
+TOTAL_VECTORS = len(METADATA_ROWS)
+print(f"[+] Loaded {TOTAL_VECTORS} vectors (shape {V_NORM.shape}, {V_NORM.nbytes / 1024:.1f} KB in RAM).")
+
+# --- INITIALIZE EMBEDDINGGEMMA 2 MODEL ---
+# Prioritize local staged directory if available, otherwise fetch from Hugging Face
+LOCAL_WEIGHTS_DIR = BASE_DIR / "model_weights" / "embeddinggemma-2"
+if LOCAL_WEIGHTS_DIR.exists() and (LOCAL_WEIGHTS_DIR / "model.safetensors").exists():
+    MODEL_SOURCE = str(LOCAL_WEIGHTS_DIR)
+    print(f"[*] Loading EmbeddingGemma 2 from local weights: {MODEL_SOURCE}")
+else:
+    MODEL_SOURCE = "google/embeddinggemma-2"
+    print(f"[*] Loading EmbeddingGemma 2 from Hugging Face Hub: {MODEL_SOURCE}")
+
+t0_model = time.perf_counter()
+model = SentenceTransformer(MODEL_SOURCE, device="cpu")
+print(f"[+] Model loaded in {time.perf_counter() - t0_model:.2f}s on CPU.")
+
+# Warm up query encoder
+_ = model.encode("task: search result | query: warm up", device="cpu", normalize_embeddings=True)
+
+# --- FASTAPI APPLICATION ---
+app = FastAPI(
+    title="Library of Congress WWII Color Footage - Semantic Video Search",
+    description="Natural-language video search powered by Google DeepMind EmbeddingGemma 2 and in-memory cosine similarity.",
+    version="2.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -70,43 +150,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def ensure_frame_assets():
-    """Ensures frame image directories exist, downloading archives from Hugging Face if missing."""
-    import tarfile
-    from huggingface_hub import hf_hub_download
-
-    WW2_FRAMES_DIR.mkdir(parents=True, exist_ok=True)
-    if len(list(WW2_FRAMES_DIR.glob("*.jpg"))) < 500:
-        try:
-            print("[*] Downloading WWII frames archive from Hugging Face...")
-            archive_path = hf_hub_download(
-                repo_id="astr010/rick-and-morty-gemma2-video-embeddings",
-                filename="assets/loc_ww2_frames.tar.gz",
-                repo_type="dataset",
-            )
-            with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(path=BASE_DIR / "data")
-            print(f"[+] Extracted {len(list(WW2_FRAMES_DIR.glob('*.jpg')))} WWII frames.")
-        except Exception as e:
-            print(f"[!] Note on WWII frames: {e}")
-
-ensure_frame_assets()
-
-# Mount local frames directory
-if WW2_FRAMES_DIR.exists():
-    app.mount("/frames/ww2", StaticFiles(directory=str(WW2_FRAMES_DIR)), name="frames_ww2")
+# Mount local keyframe images
+if FRAMES_DIR.exists():
+    app.mount("/frames/ww2", StaticFiles(directory=str(FRAMES_DIR)), name="frames_ww2")
 
 
 @app.get("/video/stream")
 @app.head("/video/stream")
 async def stream_video(range: Optional[str] = Header(None)):
-    """Streams the local WWII video file with full HTTP Range request seeking support,
-    or redirects to the high-speed Library of Congress CDN stream if running in cloud container."""
-    if not WW2_VIDEO_FILE.exists():
-        loc_cdn_url = "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02531189/02531189.mp4"
-        return RedirectResponse(url=loc_cdn_url, status_code=307)
+    """
+    Streams local video if available on disk (with HTTP 206 Partial Content range seeking),
+    otherwise seamlessly redirects to the official high-speed Library of Congress CDN MP4 stream.
+    """
+    if not LOCAL_VIDEO_FILE.exists():
+        return RedirectResponse(url=LOC_CDN_STREAM_URL, status_code=307)
 
-    file_size = WW2_VIDEO_FILE.stat().st_size
+    file_size = LOCAL_VIDEO_FILE.stat().st_size
     start = 0
     end = file_size - 1
 
@@ -118,7 +177,7 @@ async def stream_video(range: Optional[str] = Header(None)):
     chunk_size = (end - start) + 1
 
     def iter_file():
-        with open(WW2_VIDEO_FILE, "rb") as f:
+        with open(LOCAL_VIDEO_FILE, "rb") as f:
             f.seek(start)
             bytes_left = chunk_size
             while bytes_left > 0:
@@ -140,175 +199,122 @@ async def stream_video(range: Optional[str] = Header(None)):
 
 @app.get("/api/metadata")
 async def get_metadata():
-    """Returns the full archival cataloging and technical video stream metadata."""
+    """Returns the comprehensive Library of Congress cataloging and technical video stream metadata."""
     if not VIDEO_METADATA:
-        raise HTTPException(status_code=404, detail="Metadata file not found.")
+        raise HTTPException(status_code=404, detail="Metadata not found.")
     return VIDEO_METADATA
 
 
 @app.get("/api/stats")
 async def get_stats():
-    """Returns Pinecone index statistics and video metadata."""
-    try:
-        stats = index.describe_index_stats()
-        ww2_frames_count = len(list(WW2_FRAMES_DIR.glob("*.jpg"))) if WW2_FRAMES_DIR.exists() else 0
+    """Returns in-memory vector index stats, model details, and archival metadata."""
+    catalog = VIDEO_METADATA.get("catalog", {})
+    technical = VIDEO_METADATA.get("technical_stream", {})
+    frame_count = len(list(FRAMES_DIR.glob("*.jpg"))) if FRAMES_DIR.exists() else 0
 
-        namespaces_info = {}
-        for ns_name, ns_stat in stats.namespaces.items():
-            namespaces_info[ns_name] = ns_stat.vector_count
-
-        catalog = VIDEO_METADATA.get("catalog", {})
-        technical = VIDEO_METADATA.get("technical_stream", {})
-
-        return {
-            "index_name": INDEX_NAME,
-            "dimension": stats.dimension,
-            "total_vectors": stats.total_vector_count,
-            "metric": stats.metric,
-            "namespaces": namespaces_info,
-            "active_namespace": NAMESPACE,
-            "video": {
-                "lccn": catalog.get("lccn", "2020600759"),
-                "title": catalog.get("title", "World War II color footage"),
-                "director": "George Stevens (Lt. Col., U.S. Army Signal Corps)",
-                "unit": "Special Coverage Unit (SPECOU)",
-                "cinematographer": "William C. Mellor",
-                "dates": catalog.get("date_display", "1943 - 1945"),
-                "national_film_registry": catalog.get("national_film_registry", True),
-                "duration": technical.get("duration_formatted", "39m 54s"),
-                "resolution": "1440x1080 (HD 4:3)",
-                "codec": "H.264 / AAC 24fps",
-                "granularity": "1 frame every 4.0 seconds (598 clips)",
-                "loc_url": catalog.get("item_url", "https://www.loc.gov/item/2020600759/"),
-                "local_frames_available": ww2_frames_count,
-                "has_local_video": WW2_VIDEO_FILE.exists(),
-                "file_size_mb": technical.get("file_size_mb", 892.17),
-            },
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "model": "google/embeddinggemma-2",
+        "model_architecture": "EmbeddingGemma2Model (744M multimodal / 270M text)",
+        "dimension": 768,
+        "total_vectors": TOTAL_VECTORS,
+        "metric": "cosine",
+        "storage": f"In-Memory NumPy array ({V_NORM.nbytes / 1024:.1f} KB)",
+        "hosting": "Hugging Face Spaces (CPU tier)",
+        "external_database": "None (Self-contained in-memory search)",
+        "video": {
+            "lccn": catalog.get("lccn", "2020600759"),
+            "title": catalog.get("title", "World War II color footage"),
+            "director": "George Stevens (Lt. Col., U.S. Army Signal Corps)",
+            "unit": "Special Coverage Unit (SPECOU)",
+            "cinematographer": "William C. Mellor",
+            "dates": catalog.get("date_display", "1943 - 1945"),
+            "national_film_registry": catalog.get("national_film_registry", True),
+            "duration": technical.get("duration_formatted", "39m 54s"),
+            "resolution": "1440x1080 (HD 4:3)",
+            "codec": "H.264 / AAC 24fps",
+            "granularity": "1 frame every 4.0 seconds (598 clips)",
+            "loc_url": catalog.get("item_url", "https://www.loc.gov/item/2020600759/"),
+            "cdn_stream_url": LOC_CDN_STREAM_URL,
+            "local_frames_available": frame_count,
+            "has_local_video": LOCAL_VIDEO_FILE.exists(),
+        },
+    }
 
 
 @app.get("/api/search")
 async def search_video(
-    q: str = Query(..., description="Text query to search within video footage"),
-    top_k: int = Query(9, ge=1, le=24),
+    q: str = Query(..., description="Natural language search query"),
+    top_k: int = Query(9, ge=1, le=48),
 ):
     """
-    1. Embeds query into 768-dimensional space
-    2. Queries Pinecone index under namespace 'loc-ww2-color'
-    3. Resolves local frame images, metadata captions, archival properties, and timestamps
+    1. Encodes query using EmbeddingGemma 2 on CPU with task prefix
+    2. Performs instant in-memory NumPy matrix dot-product (cosine similarity)
+    3. Returns top-k matching scenes with timecodes, LOC stream seeking, and archival metadata
     """
-    if not q.strip():
-        raise HTTPException(status_code=400, detail="Query string cannot be empty.")
+    cleaned_q = q.strip()
+    if not cleaned_q:
+        raise HTTPException(status_code=400, detail="Search query cannot be empty.")
 
-    t0 = time.perf_counter()
+    formatted_query = f"task: search result | query: {cleaned_q}"
 
     # 1. Embed query
-    if not openai_client:
-        raise HTTPException(status_code=500, detail="No embedding client configured.")
-
+    t0 = time.perf_counter()
     try:
-        emb_res = openai_client.embeddings.create(
-            input=q.strip(),
-            model="text-embedding-3-small",
-            dimensions=768,
-        )
-        query_vector = emb_res.data[0].embedding
+        q_vec = model.encode(formatted_query, device="cpu", normalize_embeddings=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Embedding error: {e}")
+        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
+    embed_time_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
-    embed_time_ms = round((time.perf_counter() - t0) * 1000.0, 1)
-
-    # 2. Query Pinecone
+    # 2. In-memory cosine similarity
     t1 = time.perf_counter()
-    try:
-        pinecone_res = index.query(
-            vector=query_vector,
-            top_k=top_k,
-            namespace=NAMESPACE,
-            include_metadata=True,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Pinecone query error: {e}")
-
-    query_time_ms = round((time.perf_counter() - t1) * 1000.0, 1)
-    total_time_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+    sims = np.dot(V_NORM, q_vec)
+    top_indices = np.argsort(sims)[::-1][:top_k]
+    search_time_ms = round((time.perf_counter() - t1) * 1000.0, 3)
+    total_time_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
     # 3. Format matches
     matches = []
-    for m in pinecone_res.matches:
-        meta = m.metadata or {}
-        clip_index = int(meta.get("clip_index", 0))
-        frame_filename = meta.get("local_frame_file") or f"frame_{clip_index:04d}.jpg"
-        frame_url = f"/frames/ww2/{frame_filename}"
-        caption = meta.get("caption", "Archival WWII footage captured by George Stevens.")
-        source_link = meta.get("loc_url", "https://www.loc.gov/item/2020600759/")
+    for rank, idx in enumerate(top_indices):
+        rec = METADATA_ROWS[idx]
+        t_sec = float(rec.get("timestamp_sec", 0.0))
+        timecode = rec.get("timecode", "00:00:00")
+        frame_file = rec.get("frame_file") or f"frame_{idx:04d}.jpg"
+        clip_idx = int(rec.get("frame_idx", idx))
+
+        # Archival contextual note based on historical timeline
+        if t_sec < 1440.0:  # First 24 minutes: Berlin 1945
+            location_tag = "Berlin, Germany (Summer 1945) — SPECOU Coverage"
+        else:  # Second half: North Africa & Egypt 1943
+            location_tag = "North Africa & Egypt (1943) — Desert Maneuvers & Giza"
 
         matches.append({
-            "id": m.id,
-            "score": round(float(m.score), 4),
-            "clip_index": clip_index,
-            "start_time_s": meta.get("start_time_s", 0.0),
-            "end_time_s": meta.get("end_time_s", 0.0),
-            "timestamp": meta.get("timestamp", "00:00:00"),
-            "caption": caption,
-            "frame_url": frame_url,
-            "frame_filename": frame_filename,
-            "source_link": source_link,
-            "director": meta.get("director", "George Stevens"),
-            "unit": meta.get("unit", "U.S. Army Signal Corps SPECOU"),
-            "resolution": meta.get("resolution", "1440x1080"),
-            "medium": meta.get("medium", "16mm Kodachrome Color"),
-            "dates": meta.get("dates", "1943-1945"),
+            "id": f"loc_ww2_{clip_idx:04d}",
+            "score": round(float(sims[idx]), 4),
+            "clip_index": clip_idx,
+            "timestamp": timecode,
+            "start_time_s": t_sec,
+            "end_time_s": round(t_sec + 4.0, 2),
+            "frame_url": f"/frames/ww2/{frame_file}",
+            "frame_filename": frame_file,
+            "source_link": rec.get("loc_url", "https://www.loc.gov/item/2020600759/"),
+            "director": rec.get("director", "George Stevens"),
+            "military_unit": rec.get("military_unit", "U.S. Army Signal Corps SPECOU"),
+            "resolution": "1440x1080 Kodachrome Color",
+            "historical_context": location_tag,
+            "stream_url": LOC_CDN_STREAM_URL,
         })
 
     return {
-        "query": q,
-        "namespace": NAMESPACE,
+        "query": cleaned_q,
+        "model": "google/embeddinggemma-2",
         "timing": {
             "embed_time_ms": embed_time_ms,
-            "query_time_ms": query_time_ms,
+            "search_time_ms": search_time_ms,
             "total_time_ms": total_time_ms,
         },
         "total_matches": len(matches),
         "results": matches,
     }
-
-
-@app.get("/api/ai-describe")
-async def ai_describe(frame_file: str, query: str = ""):
-    """Provides historical context for a scene from pre-indexed captions or live vision model."""
-    frame_path = WW2_FRAMES_DIR / frame_file
-
-    if not openai_client or not frame_path.exists():
-        return {"description": "Scene verified from Library of Congress George Stevens Kodachrome archive."}
-
-    with open(frame_path, "rb") as f:
-        b64_img = base64.b64encode(f.read()).decode("utf-8")
-
-    prompt = (
-        "You are an archival film historian analyzing an authentic WWII color video frame recorded by George Stevens "
-        "and the Army Signal Corps Special Coverage Unit. Describe the visual details in 2-3 sentences. "
-    )
-    if query:
-        prompt += f"Highlight how this visual frame matches the search query: '{query}'."
-
-    try:
-        resp = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}},
-                ],
-            }],
-            max_tokens=220,
-        )
-        return {"description": resp.choices[0].message.content}
-    except Exception as e:
-        return {"description": f"Archival frame from Library of Congress catalog item 2020600759 ({e})."}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -319,7 +325,7 @@ async def serve_ui():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Library of Congress WWII Color Video Search | Pinecone Serverless</title>
+    <title>Library of Congress WWII Color Video Search | EmbeddingGemma 2</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -342,7 +348,7 @@ async def serve_ui():
                 <div>
                     <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
                         LOC Moving Image Semantic Search
-                        <span class="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">Pinecone Serverless</span>
+                        <span class="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">EmbeddingGemma 2 • In-Memory</span>
                     </h1>
                     <p class="text-xs text-slate-400">Library of Congress • WWII Color Archival Footage (LCCN 2020600759)</p>
                 </div>
@@ -358,8 +364,8 @@ async def serve_ui():
                 </button>
 
                 <div class="bg-slate-800/80 px-3 py-2 rounded-lg border border-slate-700 flex items-center gap-2">
-                    <i class="fa-solid fa-database text-amber-400"></i>
-                    <span id="statVectors" class="mono font-semibold">598 Vectors</span>
+                    <i class="fa-solid fa-bolt text-amber-400"></i>
+                    <span id="statVectors" class="mono font-semibold">598 Vectors In-Memory</span>
                 </div>
             </div>
         </div>
@@ -393,7 +399,7 @@ async def serve_ui():
                 Search 40 Minutes of <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">WWII Color Footage</span>
             </h2>
             <p class="text-slate-400 text-sm mb-6">
-                Natural-language visual search directly into authentic 16mm Kodachrome color film digitized by the Library of Congress.
+                Direct natural-language visual search with Google DeepMind <b>EmbeddingGemma 2</b> and zero-latency in-memory vector search.
             </p>
 
             <!-- Search Form -->
@@ -421,6 +427,7 @@ async def serve_ui():
                 <button onclick="setQuery('American pilots and aircraft on airfield')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">✈️ Airfield Pilots</button>
                 <button onclick="setQuery('Civilians and refugees carrying luggage and carts')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🚶 Berlin Refugees</button>
                 <button onclick="setQuery('Olympiastadion Berlin stadium empty grounds')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🏟️ Berlin Olympic Stadium</button>
+                <button onclick="setQuery('Russian Soviet soldiers marching in Berlin')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🎖️ Soviet Troops</button>
             </div>
         </div>
 
@@ -428,9 +435,9 @@ async def serve_ui():
         <div id="timingBar" class="hidden max-w-3xl mx-auto mb-8 bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2.5 text-xs flex items-center justify-between text-slate-400 shadow-md">
             <div class="flex items-center gap-4">
                 <span><i class="fa-solid fa-bolt text-amber-400 mr-1"></i> Total: <b id="timeTotal" class="text-white mono">-</b></span>
-                <span>• Embed: <b id="timeEmbed" class="text-slate-300 mono">-</b></span>
-                <span>• Pinecone: <b id="timeQuery" class="text-slate-300 mono">-</b></span>
-                <span>• Namespace: <b class="text-amber-400 mono">loc-ww2-color</b></span>
+                <span>• Gemma 2 Embed: <b id="timeEmbed" class="text-slate-300 mono">-</b></span>
+                <span>• In-Memory Dot: <b id="timeQuery" class="text-slate-300 mono">-</b></span>
+                <span>• Engine: <b class="text-amber-400 mono">NumPy float32</b></span>
             </div>
             <div class="text-amber-400 font-bold" id="matchesCount">0 scenes found</div>
         </div>
@@ -438,7 +445,7 @@ async def serve_ui():
         <!-- Loading Spinner -->
         <div id="loading" class="hidden text-center py-16">
             <div class="inline-block animate-spin text-4xl text-amber-400 mb-3"><i class="fa-solid fa-circle-notch"></i></div>
-            <p class="text-slate-400 text-sm">Embedding query and searching Pinecone index...</p>
+            <p class="text-slate-400 text-sm">Encoding query with EmbeddingGemma 2 & running in-memory search...</p>
         </div>
 
         <!-- Video Results Grid -->
@@ -487,19 +494,16 @@ async def serve_ui():
             <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 mb-4">
                 <div class="flex items-center justify-between mb-1">
                     <div class="text-xs text-amber-400 font-bold flex items-center gap-2">
-                        <i class="fa-solid fa-quote-left"></i>
-                        <span>Visual Scene Caption</span>
+                        <i class="fa-solid fa-landmark"></i>
+                        <span>Historical Timeline Context</span>
                     </div>
                     <span id="modalMetaTag" class="text-[11px] text-slate-400 mono">George Stevens • SPECOU • 1440x1080 Color</span>
                 </div>
-                <p id="modalCaption" class="text-xs text-slate-200 leading-relaxed mb-3 italic">Loading caption...</p>
+                <p id="modalCaption" class="text-xs text-slate-200 leading-relaxed mb-3">Historical scene description...</p>
                 
-                <div class="pt-2 border-t border-slate-800/80">
-                    <div class="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1">
-                        <i class="fa-solid fa-brain text-amber-400"></i>
-                        <span>Archival Deep Dive</span>
-                    </div>
-                    <p id="aiDescription" class="text-xs text-slate-300 leading-relaxed">Analyzing frame context...</p>
+                <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Captured on 16mm Kodachrome by U.S. Army Signal Corps Special Coverage Unit</span>
+                    <span class="text-emerald-400"><i class="fa-solid fa-circle-check mr-1"></i> Public Domain (LOC)</span>
                 </div>
             </div>
 
@@ -559,9 +563,9 @@ async def serve_ui():
                         <li><span class="text-slate-500">Duration:</span> 39m 53.5s (2,393.5 seconds)</li>
                         <li><span class="text-slate-500">Video Codec:</span> H.264 / AVC Main Profile</li>
                         <li><span class="text-slate-500">Audio Codec:</span> AAC (48,000 Hz, stereo)</li>
-                        <li><span class="text-slate-500">Overall Bitrate:</span> 3,126 kbps</li>
-                        <li><span class="text-slate-500">File Size:</span> 935.5 MB (935,509,658 bytes)</li>
-                        <li><span class="text-slate-500">Pinecone Vectors:</span> 598 clips (1 frame / 4 sec)</li>
+                        <li><span class="text-slate-500">Embedding Model:</span> Google DeepMind EmbeddingGemma 2</li>
+                        <li><span class="text-slate-500">Vector Count:</span> 598 clips (1 frame / 4 sec)</li>
+                        <li><span class="text-slate-500">Search Engine:</span> In-Memory NumPy float32 Dot Product</li>
                     </ul>
                 </div>
             </div>
@@ -605,7 +609,7 @@ async def serve_ui():
 
     <!-- Footer -->
     <footer class="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
-        Library of Congress Catalog Item 2020600759 • Hosted on Fireworks AI + Pinecone Serverless
+        Library of Congress Catalog Item 2020600759 • Powered by Google DeepMind EmbeddingGemma 2 • In-Memory Vector Search
     </footer>
 
     <script>
@@ -614,7 +618,7 @@ async def serve_ui():
                 const res = await fetch('/api/stats');
                 const data = await res.json();
                 const total = data.total_vectors || 598;
-                document.getElementById('statVectors').innerText = `${total} Vectors Indexed`;
+                document.getElementById('statVectors').innerText = `${total} Vectors In-Memory`;
             } catch(e) {
                 console.error("Failed to load stats", e);
             }
@@ -667,7 +671,7 @@ async def serve_ui():
                     timingBar.classList.remove('hidden');
                     document.getElementById('timeTotal').innerText = `${data.timing.total_time_ms} ms`;
                     document.getElementById('timeEmbed').innerText = `${data.timing.embed_time_ms} ms`;
-                    document.getElementById('timeQuery').innerText = `${data.timing.query_time_ms} ms`;
+                    document.getElementById('timeQuery').innerText = `${data.timing.search_time_ms} ms`;
                     document.getElementById('matchesCount').innerText = `${data.total_matches} scenes found`;
 
                     data.results.forEach((clip, idx) => {
@@ -677,7 +681,7 @@ async def serve_ui():
                         const frameSrc = clip.frame_url || 'https://via.placeholder.com/336x336?text=No+Frame';
 
                         card.innerHTML = `
-                            <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.caption)}', '${clip.director}', '${clip.resolution}')">
+                            <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.historical_context)}', '${clip.director}', '${clip.resolution}')">
                                 <img src="${frameSrc}" alt="Clip ${clip.clip_index}" class="w-full h-52 object-cover group-hover:scale-105 transition duration-300">
                                 <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
                                 <div class="absolute top-3 left-3 bg-black/75 backdrop-blur px-2.5 py-1 rounded-md text-xs font-bold text-white border border-white/10 mono">
@@ -699,10 +703,10 @@ async def serve_ui():
                                     <i class="fa-solid fa-clapperboard text-[10px]"></i>
                                     <span>${clip.director} • ${clip.resolution}</span>
                                 </div>
-                                <p class="text-xs text-slate-300 line-clamp-2 mb-3 leading-relaxed">${clip.caption}</p>
+                                <p class="text-xs text-slate-300 line-clamp-2 mb-3 leading-relaxed">${clip.historical_context}</p>
                                 <div class="flex items-center justify-between pt-2 border-t border-slate-900 text-xs">
                                     <span class="text-slate-500 mono">${clip.start_time_s}s - ${clip.end_time_s}s</span>
-                                    <button onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.caption)}', '${clip.director}', '${clip.resolution}')"
+                                    <button onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.historical_context)}', '${clip.director}', '${clip.resolution}')"
                                         class="text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 transition">
                                         <i class="fa-solid fa-circle-play"></i>
                                         <span>Watch Scene</span>
@@ -740,12 +744,12 @@ async def serve_ui():
             }
         }
 
-        async function openModal(imgSrc, timestamp, score, sourceLink, frameFile, startTimeSec, rawCaption, director, res) {
+        function openModal(imgSrc, timestamp, score, sourceLink, frameFile, startTimeSec, rawContext, director, res) {
             document.getElementById('modalImg').src = imgSrc;
             document.getElementById('modalTimestamp').innerText = timestamp;
             document.getElementById('modalScore').innerText = `Cosine: ${score}`;
             document.getElementById('modalSourceLink').href = sourceLink;
-            document.getElementById('modalCaption').innerText = rawCaption ? decodeURIComponent(rawCaption) : "";
+            document.getElementById('modalCaption').innerText = rawContext ? decodeURIComponent(rawContext) : "World War II 16mm Kodachrome Color Footage";
             document.getElementById('modalMetaTag').innerText = `${director || 'George Stevens'} • ${res || '1440x1080 Color'}`;
 
             const nativePlayer = document.getElementById('nativePlayer');
@@ -757,16 +761,6 @@ async def serve_ui():
 
             toggleModalMedia('video');
             document.getElementById('modal').classList.remove('hidden');
-
-            document.getElementById('aiDescription').innerText = "Querying archival historian analysis...";
-            const query = document.getElementById('searchInput').value;
-            try {
-                const res = await fetch(`/api/ai-describe?frame_file=${encodeURIComponent(frameFile)}&query=${encodeURIComponent(query)}`);
-                const data = await res.json();
-                document.getElementById('aiDescription').innerText = data.description || "Scene analysis complete.";
-            } catch (e) {
-                document.getElementById('aiDescription').innerText = "Could not fetch AI analysis.";
-            }
         }
 
         function closeModal() {

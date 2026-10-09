@@ -8,10 +8,18 @@ data/videos/*.webm
 data/videos/*.mp4
 data/videos/*.mkv
 
-# Temporary frame extraction scratch folders
+# Model weights (large safetensors)
+model_weights/
+*.tar.gz
+*.bin
+
+# Staging & scratch directories
+hf_space/
 data/temp_*/
 data/loc_*_frames/
+data/pinecone_export/
 
 # Local config & credentials
 .env
 *.ini
+test_ds.jsonl

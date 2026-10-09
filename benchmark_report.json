@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-10-09T19:31:29Z",
+  "model": "google/embeddinggemma-2",
+  "parameters": "744M",
+  "device": "MPS",
+  "hardware": "Apple Silicon (M3 Pro)",
+  "video": {
+    "lccn": "2020600759",
+    "title": "World War II color footage--Stevens and SPECOU in Berlin",
+    "duration_seconds": 2393.54,
+    "duration_display": "39m 54s",
+    "total_frames": 598
+  },
+  "batches": {
+    "batch_count": 2,
+    "mini_batch_size": 32,
+    "batch_1": {
+      "frames": 299,
+      "duration_seconds": 120.6,
+      "fps": 2.48
+    },
+    "batch_2": {
+      "frames": 299,
+      "duration_seconds": 117.28,
+      "fps": 2.55
+    }
+  },
+  "totals": {
+    "total_inference_seconds": 237.88,
+    "average_fps": 2.51,
+    "latency_ms_per_frame": 397.78,
+    "total_cloud_cost_usd": 0.0
+  },
+  "vector_verification": {
+    "count": 598,
+    "dimensions": 768,
+    "mean_l2_norm": 1.0000871419906616,
+    "has_nan": false
+  }
+}
