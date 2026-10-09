@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openai import OpenAI
 from pinecone import Pinecone
@@ -67,6 +67,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def ensure_frame_assets():
+    """Ensures frame image directories exist, downloading archives from Hugging Face if missing."""
+    import tarfile
+    from huggingface_hub import hf_hub_download
+
+    WW2_FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+    if len(list(WW2_FRAMES_DIR.glob("*.jpg"))) < 500:
+        try:
+            print("[*] Downloading WWII frames archive from Hugging Face...")
+            archive_path = hf_hub_download(
+                repo_id="astr010/rick-and-morty-gemma2-video-embeddings",
+                filename="assets/loc_ww2_frames.tar.gz",
+                repo_type="dataset",
+            )
+            with tarfile.open(archive_path, "r:gz") as tar:
+                tar.extractall(path=BASE_DIR / "data")
+            print(f"[+] Extracted {len(list(WW2_FRAMES_DIR.glob('*.jpg')))} WWII frames.")
+        except Exception as e:
+            print(f"[!] Note on WWII frames: {e}")
+
+    RM_FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+    if len(list(RM_FRAMES_DIR.glob("*.jpg"))) < 400:
+        try:
+            print("[*] Downloading Rick & Morty frames archive from Hugging Face...")
+            archive_path = hf_hub_download(
+                repo_id="astr010/rick-and-morty-gemma2-video-embeddings",
+                filename="assets/temp_4s_frames.tar.gz",
+                repo_type="dataset",
+            )
+            with tarfile.open(archive_path, "r:gz") as tar:
+                tar.extractall(path=BASE_DIR / "data")
+            print(f"[+] Extracted {len(list(RM_FRAMES_DIR.glob('*.jpg')))} Rick & Morty frames.")
+        except Exception as e:
+            print(f"[!] Note on Rick & Morty frames: {e}")
+
+ensure_frame_assets()
+
 # Mount local frames directories
 if WW2_FRAMES_DIR.exists():
     app.mount("/frames/ww2", StaticFiles(directory=str(WW2_FRAMES_DIR)), name="frames_ww2")
@@ -77,9 +114,11 @@ if RM_FRAMES_DIR.exists():
 @app.get("/video/stream")
 @app.head("/video/stream")
 async def stream_video(range: Optional[str] = Header(None)):
-    """Streams the local WWII video file with full HTTP Range request seeking support."""
+    """Streams the local WWII video file with full HTTP Range request seeking support,
+    or redirects to the high-speed Library of Congress CDN stream if running in cloud container."""
     if not WW2_VIDEO_FILE.exists():
-        raise HTTPException(status_code=404, detail="Video file not found on local disk.")
+        loc_cdn_url = "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02531189/02531189.mp4"
+        return RedirectResponse(url=loc_cdn_url, status_code=307)
 
     file_size = WW2_VIDEO_FILE.stat().st_size
     start = 0
@@ -862,4 +901,5 @@ async def serve_ui():
 
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8080, reload=True)
+    port = int(os.environ.get("PORT", 7860))
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
