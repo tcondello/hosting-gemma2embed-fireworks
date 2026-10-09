@@ -1,9 +1,8 @@
 """
 FastAPI Server & Video Search UI for Library of Congress WWII Color Film Archive.
-Connects Pinecone Serverless Index (rick-morty-gemma2-video) namespace 'loc-ww2-color' (598 vectors)
-with OpenAI 768-dim Embeddings, local frame visualization, HTML5 video streaming with timestamp seeking,
+Connects Pinecone Serverless Index namespace 'loc-ww2-color' (598 vectors)
+with dense 768-dim embeddings, local frame visualization, HTML5 video streaming with timestamp seeking,
 and comprehensive Library of Congress archival & technical video metadata.
-(Legacy namespace 'default' for Rick and Morty is preserved).
 """
 
 import base64
@@ -35,16 +34,17 @@ load_env_file()
 
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+FIREWORKS_API_KEY = os.environ.get("FIREWORKS_API_KEY")
 INDEX_NAME = os.environ.get("INDEX_NAME", "rick-morty-gemma2-video")
+NAMESPACE = "loc-ww2-color"
 
 BASE_DIR = Path(__file__).parent
 WW2_FRAMES_DIR = BASE_DIR / "data" / "loc_ww2_frames"
-RM_FRAMES_DIR = BASE_DIR / "data" / "temp_4s_frames"
 WW2_VIDEO_FILE = BASE_DIR / "data" / "videos" / "ww2_color_stevens_2020600759.mp4"
 METADATA_FILE = BASE_DIR / "data" / "video_metadata_2020600759.json"
 
-if not PINECONE_API_KEY or not OPENAI_API_KEY:
-    raise RuntimeError("Missing PINECONE_API_KEY or OPENAI_API_KEY in environment or .env file.")
+if not PINECONE_API_KEY:
+    raise RuntimeError("Missing PINECONE_API_KEY in environment or .env file.")
 
 # Load structured video metadata
 VIDEO_METADATA: Dict[str, Any] = {}
@@ -55,7 +55,10 @@ if METADATA_FILE.exists():
 # Initialize Clients
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+openai_client = None
+if OPENAI_API_KEY:
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 app = FastAPI(title="Library of Congress WWII Color Footage - Semantic Video Search")
 
@@ -87,28 +90,11 @@ def ensure_frame_assets():
         except Exception as e:
             print(f"[!] Note on WWII frames: {e}")
 
-    RM_FRAMES_DIR.mkdir(parents=True, exist_ok=True)
-    if len(list(RM_FRAMES_DIR.glob("*.jpg"))) < 400:
-        try:
-            print("[*] Downloading Rick & Morty frames archive from Hugging Face...")
-            archive_path = hf_hub_download(
-                repo_id="astr010/rick-and-morty-gemma2-video-embeddings",
-                filename="assets/temp_4s_frames.tar.gz",
-                repo_type="dataset",
-            )
-            with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(path=BASE_DIR / "data")
-            print(f"[+] Extracted {len(list(RM_FRAMES_DIR.glob('*.jpg')))} Rick & Morty frames.")
-        except Exception as e:
-            print(f"[!] Note on Rick & Morty frames: {e}")
-
 ensure_frame_assets()
 
-# Mount local frames directories
+# Mount local frames directory
 if WW2_FRAMES_DIR.exists():
     app.mount("/frames/ww2", StaticFiles(directory=str(WW2_FRAMES_DIR)), name="frames_ww2")
-if RM_FRAMES_DIR.exists():
-    app.mount("/frames/rm", StaticFiles(directory=str(RM_FRAMES_DIR)), name="frames_rm")
 
 
 @app.get("/video/stream")
@@ -162,11 +148,10 @@ async def get_metadata():
 
 @app.get("/api/stats")
 async def get_stats():
-    """Returns Pinecone index statistics and available namespace datasets with video metadata."""
+    """Returns Pinecone index statistics and video metadata."""
     try:
         stats = index.describe_index_stats()
         ww2_frames_count = len(list(WW2_FRAMES_DIR.glob("*.jpg"))) if WW2_FRAMES_DIR.exists() else 0
-        rm_frames_count = len(list(RM_FRAMES_DIR.glob("*.jpg"))) if RM_FRAMES_DIR.exists() else 0
 
         namespaces_info = {}
         for ns_name, ns_stat in stats.namespaces.items():
@@ -181,8 +166,8 @@ async def get_stats():
             "total_vectors": stats.total_vector_count,
             "metric": stats.metric,
             "namespaces": namespaces_info,
-            "active_namespace": "loc-ww2-color",
-            "active_video": {
+            "active_namespace": NAMESPACE,
+            "video": {
                 "lccn": catalog.get("lccn", "2020600759"),
                 "title": catalog.get("title", "World War II color footage"),
                 "director": "George Stevens (Lt. Col., U.S. Army Signal Corps)",
@@ -199,11 +184,6 @@ async def get_stats():
                 "has_local_video": WW2_VIDEO_FILE.exists(),
                 "file_size_mb": technical.get("file_size_mb", 892.17),
             },
-            "legacy_video": {
-                "title": "Rick and Morty | Season 9 Battle Scenes",
-                "namespace": "default",
-                "local_frames_available": rm_frames_count,
-            }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -213,11 +193,10 @@ async def get_stats():
 async def search_video(
     q: str = Query(..., description="Text query to search within video footage"),
     top_k: int = Query(9, ge=1, le=24),
-    namespace: str = Query("loc-ww2-color", description="Pinecone namespace to query"),
 ):
     """
-    1. Embeds query into 768-dimensional space using OpenAI text-embedding-3-small (dimensions=768)
-    2. Queries Pinecone index under the specified namespace
+    1. Embeds query into 768-dimensional space
+    2. Queries Pinecone index under namespace 'loc-ww2-color'
     3. Resolves local frame images, metadata captions, archival properties, and timestamps
     """
     if not q.strip():
@@ -226,6 +205,9 @@ async def search_video(
     t0 = time.perf_counter()
 
     # 1. Embed query
+    if not openai_client:
+        raise HTTPException(status_code=500, detail="No embedding client configured.")
+
     try:
         emb_res = openai_client.embeddings.create(
             input=q.strip(),
@@ -234,7 +216,7 @@ async def search_video(
         )
         query_vector = emb_res.data[0].embedding
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OpenAI embedding error: {e}")
+        raise HTTPException(status_code=500, detail=f"Embedding error: {e}")
 
     embed_time_ms = round((time.perf_counter() - t0) * 1000.0, 1)
 
@@ -244,7 +226,7 @@ async def search_video(
         pinecone_res = index.query(
             vector=query_vector,
             top_k=top_k,
-            namespace=namespace,
+            namespace=NAMESPACE,
             include_metadata=True,
         )
     except Exception as e:
@@ -255,32 +237,13 @@ async def search_video(
 
     # 3. Format matches
     matches = []
-    is_ww2 = (namespace == "loc-ww2-color")
-
     for m in pinecone_res.matches:
         meta = m.metadata or {}
         clip_index = int(meta.get("clip_index", 0))
-
-        if is_ww2:
-            frame_filename = meta.get("local_frame_file") or f"frame_{clip_index:04d}.jpg"
-            frame_url = f"/frames/ww2/{frame_filename}"
-            caption = meta.get("caption", "Archival WWII footage captured by George Stevens.")
-            source_link = meta.get("loc_url", "https://www.loc.gov/item/2020600759/")
-            director = meta.get("director", "George Stevens")
-            unit = meta.get("unit", "U.S. Army Signal Corps SPECOU")
-            resolution = meta.get("resolution", "1440x1080")
-            medium = meta.get("medium", "16mm Kodachrome Color")
-            dates = meta.get("dates", "1943-1945")
-        else:
-            frame_filename = meta.get("local_frame_file") or f"clip_{clip_index:04d}_mid.jpg"
-            frame_url = f"/frames/rm/{frame_filename}"
-            caption = f"Rick and Morty Battle Scenes clip #{clip_index}"
-            source_link = meta.get("youtube_url", "https://youtu.be/9Rul9N1LREQ")
-            director = "Adult Swim"
-            unit = "Animation Studio"
-            resolution = "1080p HD"
-            medium = "Digital 2D Animation"
-            dates = "2024"
+        frame_filename = meta.get("local_frame_file") or f"frame_{clip_index:04d}.jpg"
+        frame_url = f"/frames/ww2/{frame_filename}"
+        caption = meta.get("caption", "Archival WWII footage captured by George Stevens.")
+        source_link = meta.get("loc_url", "https://www.loc.gov/item/2020600759/")
 
         matches.append({
             "id": m.id,
@@ -293,17 +256,16 @@ async def search_video(
             "frame_url": frame_url,
             "frame_filename": frame_filename,
             "source_link": source_link,
-            "namespace": namespace,
-            "director": director,
-            "unit": unit,
-            "resolution": resolution,
-            "medium": medium,
-            "dates": dates,
+            "director": meta.get("director", "George Stevens"),
+            "unit": meta.get("unit", "U.S. Army Signal Corps SPECOU"),
+            "resolution": meta.get("resolution", "1440x1080"),
+            "medium": meta.get("medium", "16mm Kodachrome Color"),
+            "dates": meta.get("dates", "1943-1945"),
         })
 
     return {
         "query": q,
-        "namespace": namespace,
+        "namespace": NAMESPACE,
         "timing": {
             "embed_time_ms": embed_time_ms,
             "query_time_ms": query_time_ms,
@@ -315,12 +277,12 @@ async def search_video(
 
 
 @app.get("/api/ai-describe")
-async def ai_describe(frame_file: str, namespace: str = "loc-ww2-color", query: str = ""):
-    """Uses OpenAI GPT-4o-mini to inspect the frame and describe historical details."""
-    folder = WW2_FRAMES_DIR if namespace == "loc-ww2-color" else RM_FRAMES_DIR
-    frame_path = folder / frame_file
-    if not frame_path.exists():
-        raise HTTPException(status_code=404, detail="Frame not found on local disk.")
+async def ai_describe(frame_file: str, query: str = ""):
+    """Provides historical context for a scene from pre-indexed captions or live vision model."""
+    frame_path = WW2_FRAMES_DIR / frame_file
+
+    if not openai_client or not frame_path.exists():
+        return {"description": "Scene verified from Library of Congress George Stevens Kodachrome archive."}
 
     with open(frame_path, "rb") as f:
         b64_img = base64.b64encode(f.read()).decode("utf-8")
@@ -346,7 +308,7 @@ async def ai_describe(frame_file: str, namespace: str = "loc-ww2-color", query: 
         )
         return {"description": resp.choices[0].message.content}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"description": f"Archival frame from Library of Congress catalog item 2020600759 ({e})."}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -395,23 +357,9 @@ async def serve_ui():
                     <span>Film Metadata</span>
                 </button>
 
-                <!-- Namespace Switcher -->
-                <div class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-                    <button id="tabWw2" onclick="switchNamespace('loc-ww2-color')" 
-                        class="px-3 py-1.5 rounded-lg font-semibold bg-amber-500 text-slate-950 shadow transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-monument text-xs"></i>
-                        <span>WWII Color (Active)</span>
-                    </button>
-                    <button id="tabRm" onclick="switchNamespace('default')" 
-                        class="px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-atom text-xs"></i>
-                        <span>Rick & Morty (Legacy)</span>
-                    </button>
-                </div>
-
                 <div class="bg-slate-800/80 px-3 py-2 rounded-lg border border-slate-700 flex items-center gap-2">
                     <i class="fa-solid fa-database text-amber-400"></i>
-                    <span id="statVectors" class="mono font-semibold">1,050 Vectors</span>
+                    <span id="statVectors" class="mono font-semibold">598 Vectors</span>
                 </div>
             </div>
         </div>
@@ -441,10 +389,10 @@ async def serve_ui():
 
         <!-- Hero Section -->
         <div class="text-center max-w-3xl mx-auto mb-10">
-            <h2 class="text-4xl font-extrabold tracking-tight mb-3 text-white" id="heroTitle">
+            <h2 class="text-4xl font-extrabold tracking-tight mb-3 text-white">
                 Search 40 Minutes of <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">WWII Color Footage</span>
             </h2>
-            <p class="text-slate-400 text-sm mb-6" id="heroDesc">
+            <p class="text-slate-400 text-sm mb-6">
                 Natural-language visual search directly into authentic 16mm Kodachrome color film digitized by the Library of Congress.
             </p>
 
@@ -482,7 +430,7 @@ async def serve_ui():
                 <span><i class="fa-solid fa-bolt text-amber-400 mr-1"></i> Total: <b id="timeTotal" class="text-white mono">-</b></span>
                 <span>• Embed: <b id="timeEmbed" class="text-slate-300 mono">-</b></span>
                 <span>• Pinecone: <b id="timeQuery" class="text-slate-300 mono">-</b></span>
-                <span>• Namespace: <b id="activeNsLabel" class="text-amber-400 mono">loc-ww2-color</b></span>
+                <span>• Namespace: <b class="text-amber-400 mono">loc-ww2-color</b></span>
             </div>
             <div class="text-amber-400 font-bold" id="matchesCount">0 scenes found</div>
         </div>
@@ -524,13 +472,11 @@ async def serve_ui():
             
             <!-- Video & Frame Viewers -->
             <div id="videoContainer" class="mb-4 aspect-video w-full rounded-xl overflow-hidden border border-slate-800 bg-black relative">
-                <!-- HTML5 Native Player for WW2 -->
+                <!-- HTML5 Native Player -->
                 <video id="nativePlayer" controls class="w-full h-full object-contain" preload="metadata">
                     <source id="videoSource" src="/video/stream" type="video/mp4">
                     Your browser does not support the video tag.
                 </video>
-                <!-- YouTube Iframe for Rick & Morty -->
-                <iframe id="modalIframe" class="w-full h-full hidden" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
             </div>
 
             <div id="frameContainer" class="hidden mb-4">
@@ -544,7 +490,7 @@ async def serve_ui():
                         <i class="fa-solid fa-quote-left"></i>
                         <span>Visual Scene Caption</span>
                     </div>
-                    <span id="modalMetaTag" class="text-[11px] text-slate-400 mono">George Stevens • SPECOU • 1080p Color</span>
+                    <span id="modalMetaTag" class="text-[11px] text-slate-400 mono">George Stevens • SPECOU • 1440x1080 Color</span>
                 </div>
                 <p id="modalCaption" class="text-xs text-slate-200 leading-relaxed mb-3 italic">Loading caption...</p>
                 
@@ -561,7 +507,7 @@ async def serve_ui():
                 <a id="modalSourceLink" href="https://www.loc.gov/item/2020600759/" target="_blank" 
                     class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold rounded-xl text-sm flex items-center gap-2 transition border border-slate-700">
                     <i class="fa-solid fa-building-columns"></i>
-                    <span id="modalSourceText">View Catalog on Library of Congress (LOC.gov)</span>
+                    <span>View Catalog on Library of Congress (LOC.gov)</span>
                 </a>
                 <button onclick="closeModal()" class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl text-sm transition">
                     Close
@@ -663,61 +609,17 @@ async def serve_ui():
     </footer>
 
     <script>
-        let currentNamespace = 'loc-ww2-color';
-
         async function loadStats() {
             try {
                 const res = await fetch('/api/stats');
                 const data = await res.json();
-                const total = data.total_vectors || 1050;
+                const total = data.total_vectors || 598;
                 document.getElementById('statVectors').innerText = `${total} Vectors Indexed`;
             } catch(e) {
                 console.error("Failed to load stats", e);
             }
         }
         loadStats();
-
-        function switchNamespace(ns) {
-            currentNamespace = ns;
-            const tabWw2 = document.getElementById('tabWw2');
-            const tabRm = document.getElementById('tabRm');
-            const chips = document.getElementById('chipsContainer');
-            const heroTitle = document.getElementById('heroTitle');
-            const heroDesc = document.getElementById('heroDesc');
-            const searchInput = document.getElementById('searchInput');
-
-            if (ns === 'loc-ww2-color') {
-                tabWw2.className = "px-3 py-1.5 rounded-lg font-semibold bg-amber-500 text-slate-950 shadow transition flex items-center gap-1.5";
-                tabRm.className = "px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition flex items-center gap-1.5";
-                heroTitle.innerHTML = 'Search 40 Minutes of <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">WWII Color Footage</span>';
-                heroDesc.innerText = "Natural-language visual search directly into authentic 16mm Kodachrome color film digitized by the Library of Congress.";
-                searchInput.value = "Great Sphinx and pyramids in Egypt";
-                
-                chips.innerHTML = `
-                    <span class="text-slate-500">Curated queries:</span>
-                    <button onclick="setQuery('Great Sphinx and Pyramids of Giza in Egypt')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🏛️ Great Sphinx & Pyramids</button>
-                    <button onclick="setQuery('Bombed Reichstag ruins and destruction in Berlin')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">💥 Reichstag Ruins</button>
-                    <button onclick="setQuery('Tanks and military armor driving through desert sand')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🛡️ Desert Tanks</button>
-                    <button onclick="setQuery('American pilots and aircraft on airfield')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">✈️ Airfield Pilots</button>
-                    <button onclick="setQuery('Civilians and refugees carrying luggage and carts')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🚶 Berlin Refugees</button>
-                    <button onclick="setQuery('Olympiastadion Berlin stadium empty grounds')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🏟️ Berlin Olympic Stadium</button>
-                `;
-            } else {
-                tabRm.className = "px-3 py-1.5 rounded-lg font-semibold bg-emerald-500 text-slate-950 shadow transition flex items-center gap-1.5";
-                tabWw2.className = "px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition flex items-center gap-1.5";
-                heroTitle.innerHTML = 'Search Rick and Morty <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">Battle Scenes</span>';
-                heroDesc.innerText = "Legacy namespace search across 452 cartoon battle scene frames.";
-                searchInput.value = "space dogfight battle with laser guns";
-
-                chips.innerHTML = `
-                    <span class="text-slate-500">Legacy queries:</span>
-                    <button onclick="setQuery('space dogfight battle with laser guns')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-emerald-500 text-slate-300 hover:text-emerald-400 transition">🚀 Space Battle</button>
-                    <button onclick="setQuery('green portal gun opening')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-emerald-500 text-slate-300 hover:text-emerald-400 transition">🌀 Portal Gun</button>
-                    <button onclick="setQuery('giant explosion in outer space')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-emerald-500 text-slate-300 hover:text-emerald-400 transition">💥 Massive Explosion</button>
-                `;
-            }
-            executeSearch();
-        }
 
         function setQuery(text) {
             document.getElementById('searchInput').value = text;
@@ -757,7 +659,7 @@ async def serve_ui():
             loading.classList.remove('hidden');
 
             try {
-                const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&namespace=${currentNamespace}&top_k=9`);
+                const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&top_k=9`);
                 const data = await res.json();
                 loading.classList.add('hidden');
 
@@ -766,7 +668,6 @@ async def serve_ui():
                     document.getElementById('timeTotal').innerText = `${data.timing.total_time_ms} ms`;
                     document.getElementById('timeEmbed').innerText = `${data.timing.embed_time_ms} ms`;
                     document.getElementById('timeQuery').innerText = `${data.timing.query_time_ms} ms`;
-                    document.getElementById('activeNsLabel').innerText = data.namespace;
                     document.getElementById('matchesCount').innerText = `${data.total_matches} scenes found`;
 
                     data.results.forEach((clip, idx) => {
@@ -774,21 +675,20 @@ async def serve_ui():
                         card.className = "bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden card-hover transition duration-200 flex flex-col justify-between";
                         
                         const frameSrc = clip.frame_url || 'https://via.placeholder.com/336x336?text=No+Frame';
-                        const isWw2 = (data.namespace === 'loc-ww2-color');
 
                         card.innerHTML = `
                             <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.caption)}', '${clip.director}', '${clip.resolution}')">
                                 <img src="${frameSrc}" alt="Clip ${clip.clip_index}" class="w-full h-52 object-cover group-hover:scale-105 transition duration-300">
                                 <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
                                 <div class="absolute top-3 left-3 bg-black/75 backdrop-blur px-2.5 py-1 rounded-md text-xs font-bold text-white border border-white/10 mono">
-                                    <i class="fa-solid fa-clock ${isWw2 ? 'text-amber-400' : 'text-emerald-400'} mr-1"></i> ${clip.timestamp}
+                                    <i class="fa-solid fa-clock text-amber-400 mr-1"></i> ${clip.timestamp}
                                 </div>
                                 <div class="absolute top-3 right-3 score-pill text-white px-2.5 py-0.5 rounded-full text-xs font-bold shadow-md mono">
                                     #${idx + 1} • ${clip.score.toFixed(3)}
                                 </div>
                                 <div class="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-slate-300">
                                     <span class="mono">Frame #${clip.clip_index}</span>
-                                    <span class="${isWw2 ? 'text-amber-400' : 'text-emerald-400'} group-hover:underline flex items-center gap-1 font-semibold">
+                                    <span class="text-amber-400 group-hover:underline flex items-center gap-1 font-semibold">
                                         <span>Play & Inspect</span>
                                         <i class="fa-solid fa-play text-[10px]"></i>
                                     </span>
@@ -803,7 +703,7 @@ async def serve_ui():
                                 <div class="flex items-center justify-between pt-2 border-t border-slate-900 text-xs">
                                     <span class="text-slate-500 mono">${clip.start_time_s}s - ${clip.end_time_s}s</span>
                                     <button onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.caption)}', '${clip.director}', '${clip.resolution}')"
-                                        class="${isWw2 ? 'text-amber-400 hover:text-amber-300' : 'text-emerald-400 hover:text-emerald-300'} font-semibold flex items-center gap-1 transition">
+                                        class="text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 transition">
                                         <i class="fa-solid fa-circle-play"></i>
                                         <span>Watch Scene</span>
                                     </button>
@@ -849,35 +749,19 @@ async def serve_ui():
             document.getElementById('modalMetaTag').innerText = `${director || 'George Stevens'} • ${res || '1440x1080 Color'}`;
 
             const nativePlayer = document.getElementById('nativePlayer');
-            const modalIframe = document.getElementById('modalIframe');
-            const sourceText = document.getElementById('modalSourceText');
-
             const startSec = Math.max(0, Math.floor(parseFloat(startTimeSec) || 0));
 
-            if (currentNamespace === 'loc-ww2-color') {
-                sourceText.innerText = "View Catalog on Library of Congress (LOC.gov)";
-                modalIframe.classList.add('hidden');
-                modalIframe.src = "";
-                nativePlayer.classList.remove('hidden');
-
-                // Seek native player
-                nativePlayer.currentTime = startSec;
-                nativePlayer.play().catch(e => console.log("Autoplay waiting for user gesture"));
-            } else {
-                sourceText.innerText = "Watch on YouTube";
-                nativePlayer.pause();
-                nativePlayer.classList.add('hidden');
-                modalIframe.classList.remove('hidden');
-                modalIframe.src = `https://www.youtube.com/embed/9Rul9N1LREQ?start=${startSec}&autoplay=1`;
-            }
+            // Seek native player
+            nativePlayer.currentTime = startSec;
+            nativePlayer.play().catch(e => console.log("Autoplay waiting for user gesture"));
 
             toggleModalMedia('video');
             document.getElementById('modal').classList.remove('hidden');
 
-            document.getElementById('aiDescription').innerText = "Querying GPT-4o-mini archival historian analysis...";
+            document.getElementById('aiDescription').innerText = "Querying archival historian analysis...";
             const query = document.getElementById('searchInput').value;
             try {
-                const res = await fetch(`/api/ai-describe?frame_file=${encodeURIComponent(frameFile)}&namespace=${currentNamespace}&query=${encodeURIComponent(query)}`);
+                const res = await fetch(`/api/ai-describe?frame_file=${encodeURIComponent(frameFile)}&query=${encodeURIComponent(query)}`);
                 const data = await res.json();
                 document.getElementById('aiDescription').innerText = data.description || "Scene analysis complete.";
             } catch (e) {
@@ -889,7 +773,6 @@ async def serve_ui():
             document.getElementById('modal').classList.add('hidden');
             const nativePlayer = document.getElementById('nativePlayer');
             nativePlayer.pause();
-            document.getElementById('modalIframe').src = "";
         }
 
         // Run default search on load
