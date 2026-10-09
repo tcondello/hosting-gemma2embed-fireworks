@@ -309,11 +309,24 @@ async def serve_ui():
             <button onclick="closeModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-xl">
                 <i class="fa-solid fa-xmark"></i>
             </button>
-            <div class="mb-4">
-                <span id="modalTimestamp" class="text-xs px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">00:00:00</span>
-                <span id="modalScore" class="text-xs text-slate-400 ml-2">Score: 0.000</span>
+            <div class="mb-4 flex items-center justify-between">
+                <div>
+                    <span id="modalTimestamp" class="text-xs px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">00:00:00</span>
+                    <span id="modalScore" class="text-xs text-slate-400 ml-2">Score: 0.000</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="toggleVideoView('frame')" id="btnViewFrame" class="px-3 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 font-semibold hover:bg-slate-700">Frame</button>
+                    <button onclick="toggleVideoView('video')" id="btnViewVideo" class="px-3 py-1 text-xs rounded-lg bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400">Play Video</button>
+                </div>
             </div>
-            <img id="modalImg" src="" alt="Scene Frame" class="w-full rounded-xl border border-slate-800 mb-4 object-cover max-h-96">
+            
+            <!-- Video & Frame Viewers -->
+            <div id="frameContainer" class="hidden mb-4">
+                <img id="modalImg" src="" alt="Scene Frame" class="w-full rounded-xl border border-slate-800 object-cover max-h-80">
+            </div>
+            <div id="videoContainer" class="mb-4 aspect-video w-full rounded-xl overflow-hidden border border-slate-800 bg-black">
+                <iframe id="modalIframe" class="w-full h-full" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            </div>
             
             <!-- AI Explanation Box -->
             <div id="aiBox" class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 mb-4">
@@ -400,7 +413,7 @@ async def serve_ui():
                         const scorePct = Math.round(clip.score * 100);
 
                         card.innerHTML = `
-                            <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.youtube_url}', '${clip.frame_filename}')">
+                            <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.youtube_url}', '${clip.frame_filename}', '${clip.start_time_s}')">
                                 <img src="${frameSrc}" alt="Clip ${clip.clip_index}" class="w-full h-48 object-cover group-hover:scale-105 transition duration-300">
                                 <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent opacity-80"></div>
                                 <div class="absolute top-3 left-3 bg-black/70 backdrop-blur px-2.5 py-1 rounded-md text-xs font-bold text-white border border-white/10">
@@ -437,12 +450,37 @@ async def serve_ui():
             }
         }
 
+        function toggleVideoView(view) {
+            const frameC = document.getElementById('frameContainer');
+            const videoC = document.getElementById('videoContainer');
+            const btnF = document.getElementById('btnViewFrame');
+            const btnV = document.getElementById('btnViewVideo');
+
+            if (view === 'frame') {
+                frameC.classList.remove('hidden');
+                videoC.classList.add('hidden');
+                btnF.className = "px-3 py-1 text-xs rounded-lg bg-emerald-500 text-slate-950 font-bold";
+                btnV.className = "px-3 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 font-semibold";
+            } else {
+                frameC.classList.add('hidden');
+                videoC.classList.remove('hidden');
+                btnV.className = "px-3 py-1 text-xs rounded-lg bg-emerald-500 text-slate-950 font-bold";
+                btnF.className = "px-3 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 font-semibold";
+            }
+        }
+
         // Modal Logic
-        async function openModal(imgSrc, timestamp, score, ytUrl, frameFile) {
+        async function openModal(imgSrc, timestamp, score, ytUrl, frameFile, startTimeSec) {
             document.getElementById('modalImg').src = imgSrc;
             document.getElementById('modalTimestamp').innerText = timestamp;
-            document.getElementById('modalScore').innerText = `Cosine Similarity: ${score}`;
+            document.getElementById('modalScore').innerText = `Score: ${score}`;
             document.getElementById('modalYoutubeLink').href = ytUrl;
+
+            // Load embedded YouTube player at exact second
+            const startSec = Math.floor(parseFloat(startTimeSec) || 0);
+            document.getElementById('modalIframe').src = `https://www.youtube.com/embed/9Rul9N1LREQ?start=${startSec}&autoplay=1`;
+            toggleVideoView('video');
+
             document.getElementById('aiDescription').innerText = "Querying GPT-4o-mini to analyze scene details...";
             document.getElementById('modal').classList.remove('hidden');
 
@@ -458,6 +496,7 @@ async def serve_ui():
 
         function closeModal() {
             document.getElementById('modal').classList.add('hidden');
+            document.getElementById('modalIframe').src = "";
         }
 
         // Run default search on load
