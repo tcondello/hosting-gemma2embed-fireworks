@@ -1,0 +1,67 @@
+[
+  {
+    "clip_id": 0,
+    "start_time_s": 0.0,
+    "end_time_s": 8.0,
+    "embedding_dim": 768,
+    "sample_embedding_vector": [
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+    ]
+  },
+  {
+    "clip_id": 1,
+    "start_time_s": 8.0,
+    "end_time_s": 16.0,
+    "embedding_dim": 768,
+    "sample_embedding_vector": [
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+    ]
+  },
+  {
+    "clip_id": 2,
+    "start_time_s": 16.0,
+    "end_time_s": 24.0,
+    "embedding_dim": 768,
+    "sample_embedding_vector": [
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+    ]
+  },
+  {
+    "clip_id": 3,
+    "start_time_s": 24.0,
+    "end_time_s": 32.0,
+    "embedding_dim": 768,
+    "sample_embedding_vector": [
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+    ]
+  },
+  {
+    "clip_id": 4,
+    "start_time_s": 32.0,
+    "end_time_s": 40.0,
+    "embedding_dim": 768,
+    "sample_embedding_vector": [
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+    ]
+  }
+]

@@ -1,0 +1,16 @@
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Large raw video downloads (exceeds GitHub 100MB limit)
+data/videos/*.webm
+data/videos/*.mp4
+data/videos/*.mkv
+
+# Temporary frame extraction scratch folders
+data/temp_*/
+
+# Local config & credentials
+.env
+*.ini

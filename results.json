@@ -1,0 +1,47 @@
+[
+  {
+    "batch_size": 1,
+    "num_requests": 10,
+    "concurrency": 4,
+    "total_tokens": 1430,
+    "elapsed_time_s": 0.040278041968122125,
+    "requests_per_second": 248.27423358649,
+    "tokens_per_second": 35503.215402868074,
+    "p50_latency_ms": 13.357103569433093,
+    "p90_latency_ms": 13.365583959966898,
+    "p99_latency_ms": 13.365583959966898,
+    "dollars_per_token": 6.259213981060158e-08,
+    "dollars_per_million_tokens": 0.06259213981060158,
+    "gpu_hourly_rate": 8.0
+  },
+  {
+    "batch_size": 32,
+    "num_requests": 10,
+    "concurrency": 4,
+    "total_tokens": 45760,
+    "elapsed_time_s": 0.06424741703085601,
+    "requests_per_second": 155.6482806958187,
+    "tokens_per_second": 712246.5324640664,
+    "p50_latency_ms": 21.254333551041782,
+    "p90_latency_ms": 21.41591696999967,
+    "p99_latency_ms": 21.41591696999967,
+    "dollars_per_token": 3.120018309579255e-09,
+    "dollars_per_million_tokens": 0.003120018309579255,
+    "gpu_hourly_rate": 8.0
+  },
+  {
+    "batch_size": 128,
+    "num_requests": 10,
+    "concurrency": 4,
+    "total_tokens": 183040,
+    "elapsed_time_s": 0.13983329199254513,
+    "requests_per_second": 71.51372793635672,
+    "tokens_per_second": 1308987.2761470734,
+    "p50_latency_ms": 45.91458349023014,
+    "p90_latency_ms": 46.70804203487933,
+    "p99_latency_ms": 46.70804203487933,
+    "dollars_per_token": 1.6976652582622513e-09,
+    "dollars_per_million_tokens": 0.0016976652582622513,
+    "gpu_hourly_rate": 8.0
+  }
+]

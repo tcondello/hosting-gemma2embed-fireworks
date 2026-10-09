@@ -1,0 +1,74 @@
+{
+  "video_profile": {
+    "file_path": "data/videos/Rick and Morty \uff5c Season 9 Battle Scenes \uff5c adult swim.webm",
+    "duration_s": 1804.161,
+    "width": 854,
+    "height": 480,
+    "fps": 23.976023976023978,
+    "total_frames": 43257,
+    "video_codec": "av1",
+    "audio_codec": "opus",
+    "file_size_mb": 122.60620975494385
+  },
+  "embedding_plans": [
+    {
+      "name": "Plan A: 8-Second Action Clips (Recommended for Semantic Video RAG)",
+      "description": "Splits video into 8-second segments, each represented by 8 uniformly sampled frames. Ideal for natural language action retrieval.",
+      "sampling_rate_fps": 1.0,
+      "clip_duration_s": 8.0,
+      "total_units": 226,
+      "frames_per_unit": 8,
+      "tokens_per_unit": 1120,
+      "total_tokens": 253120,
+      "batches_at_bs256": 1,
+      "estimated_latency_s": 0.7031111111111111,
+      "cost_fireworks_h100_usd": 0.0015624691358024692,
+      "cost_vertex_ai_usd": 0.0601387,
+      "cost_voyage_usd": 0.0303744,
+      "savings_vs_vertex_pct": 97.40189073624393
+    },
+    {
+      "name": "Plan B: 2-Second Keyframe Storyboard (Fine-Grained Frame Search)",
+      "description": "Extracts 1 keyframe every 2 seconds, embedded as individual images (280 tokens). Enables precise timestamp jumping down to 2 seconds.",
+      "sampling_rate_fps": 0.5,
+      "clip_duration_s": 2.0,
+      "total_units": 903,
+      "frames_per_unit": 1,
+      "tokens_per_unit": 280,
+      "total_tokens": 252840,
+      "batches_at_bs256": 4,
+      "estimated_latency_s": 0.7023333333333334,
+      "cost_fireworks_h100_usd": 0.0015607407407407408,
+      "cost_vertex_ai_usd": 0.22575,
+      "cost_voyage_usd": 0.0303408,
+      "savings_vs_vertex_pct": 99.30864197530865
+    },
+    {
+      "name": "Plan C: 15-Second Video + Audio Interleaved (Dense Multimodal Search)",
+      "description": "Captures both visual motion and character dialogue simultaneously by combining 15 video frames and 15 seconds of audio per chunk.",
+      "sampling_rate_fps": 1.0,
+      "clip_duration_s": 15.0,
+      "total_units": 121,
+      "frames_per_unit": 15,
+      "tokens_per_unit": 2475,
+      "total_tokens": 299475,
+      "batches_at_bs256": 1,
+      "estimated_latency_s": 0.831875,
+      "cost_fireworks_h100_usd": 0.0018486111111111112,
+      "cost_vertex_ai_usd": 0.0601387,
+      "cost_voyage_usd": 0.035937,
+      "savings_vs_vertex_pct": 96.92608734290712
+    }
+  ],
+  "sample_keyframes": [
+    "data/keyframes/keyframe_0010s.jpg",
+    "data/keyframes/keyframe_0060s.jpg",
+    "data/keyframes/keyframe_0180s.jpg",
+    "data/keyframes/keyframe_0300s.jpg",
+    "data/keyframes/keyframe_0600s.jpg",
+    "data/keyframes/keyframe_0900s.jpg",
+    "data/keyframes/keyframe_1200s.jpg",
+    "data/keyframes/keyframe_1500s.jpg",
+    "data/keyframes/keyframe_1750s.jpg"
+  ]
+}
