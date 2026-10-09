@@ -1,5 +1,6 @@
-# Python virtual environment
+# Python virtual environment & Node modules
 .venv/
+node_modules/
 __pycache__/
 *.pyc
 
@@ -14,7 +15,8 @@ model_weights/
 *.bin
 
 # Staging & scratch directories
-hf_space/
+hf_space/frames/
+hf_space/data/
 data/temp_*/
 data/loc_*_frames/
 data/pinecone_export/

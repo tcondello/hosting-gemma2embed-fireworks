@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Library of Congress WWII Color Video Search | Live EmbeddingGemma 2</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #080c15; color: #f1f5f9; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .amber-glow { box-shadow: 0 0 35px rgba(245, 158, 11, 0.2); }
+        .card-hover:hover { transform: translateY(-4px); box-shadow: 0 12px 30px rgba(245, 158, 11, 0.15); }
+        .score-pill { background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between">
+    <!-- Navbar -->
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 text-lg font-bold shadow-md">
+                    <i class="fa-solid fa-film"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                        LOC Moving Image Semantic Search
+                        <span class="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">EmbeddingGemma 2 • Live</span>
+                    </h1>
+                    <p class="text-xs text-slate-400">Library of Congress • WWII Color Archival Footage (LCCN 2020600759)</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-3 text-xs">
+                <button onclick="openMetadataModal()" 
+                    class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 font-semibold border border-amber-500/30 transition flex items-center gap-1.5 shadow">
+                    <i class="fa-solid fa-circle-info"></i>
+                    <span>Film Metadata</span>
+                </button>
+
+                <!-- Engine Live Status -->
+                <div id="modelEngineBadge" class="bg-amber-500/10 px-3 py-2 rounded-lg border border-amber-500/30 text-amber-300 flex items-center gap-2 mono font-semibold">
+                    <i id="modelSpinner" class="fa-solid fa-spinner animate-spin text-amber-400"></i>
+                    <span id="modelEngineText">Initializing In-Browser Gemma 2...</span>
+                </div>
+
+                <div class="bg-slate-800/80 px-3 py-2 rounded-lg border border-slate-700 flex items-center gap-2">
+                    <i class="fa-solid fa-database text-amber-400"></i>
+                    <span id="statVectors" class="mono font-semibold">598 Vectors</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-7xl mx-auto px-6 py-8 flex-1 w-full">
+        <!-- Film Quick Metadata Banner -->
+        <div class="max-w-4xl mx-auto mb-8 bg-slate-900/60 border border-slate-800/90 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 text-xs">
+            <div class="flex items-center gap-3">
+                <span class="px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 mono">LCCN 2020600759</span>
+                <span class="text-slate-300"><i class="fa-solid fa-user-tie text-amber-400 mr-1"></i> Dir: <b>George Stevens</b> (SPECOU)</span>
+                <span class="text-slate-400 hidden sm:inline">•</span>
+                <span class="text-slate-300 hidden sm:inline"><i class="fa-solid fa-camera text-blue-400 mr-1"></i> <b>William C. Mellor</b></span>
+                <span class="text-slate-400 hidden md:inline">•</span>
+                <span class="text-slate-300 hidden md:inline"><i class="fa-solid fa-calendar text-emerald-400 mr-1"></i> <b>1943 & 1945</b></span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-medium">1440x1080 HD Kodachrome</span>
+                <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-medium">National Film Registry</span>
+                <a href="https://www.loc.gov/item/2020600759/" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1 font-semibold">
+                    <span>LOC.gov</span>
+                    <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                </a>
+            </div>
+        </div>
+
+        <!-- Hero Section -->
+        <div class="text-center max-w-3xl mx-auto mb-6">
+            <h2 class="text-4xl font-extrabold tracking-tight mb-3 text-white">
+                Search 40 Minutes of <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">WWII Color Footage</span>
+            </h2>
+            <p class="text-slate-400 text-sm mb-6">
+                Type natural queries to search across authentic 16mm Kodachrome film using live <b>Google DeepMind EmbeddingGemma 2</b> neural network vectors.
+            </p>
+
+            <!-- Search Form -->
+            <form id="searchForm" class="relative max-w-2xl mx-auto mb-3">
+                <div class="relative flex items-center">
+                    <i class="fa-solid fa-magnifying-glass absolute left-4 text-amber-400 text-lg"></i>
+                    <input type="text" id="searchInput" 
+                        class="w-full pl-12 pr-32 py-4 bg-slate-900 border border-slate-700 rounded-2xl text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 amber-glow transition text-base"
+                        placeholder="Search any scene (e.g. 'cars', 'soldiers marching', 'desert tanks')..." 
+                        value="" autocomplete="off" required>
+                    <button type="submit" id="searchBtn"
+                        class="absolute right-2 px-6 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold rounded-xl transition flex items-center gap-2 text-sm shadow-lg shadow-amber-500/20">
+                        <span>Search</span>
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+                </div>
+            </form>
+
+            <!-- Dynamic Model Download Progress Bar -->
+            <div id="modelDownloadBar" class="max-w-2xl mx-auto mb-4 bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-xs flex items-center justify-between gap-4 text-slate-300">
+                <div class="flex items-center gap-2 flex-1 text-left">
+                    <i class="fa-solid fa-brain text-amber-400"></i>
+                    <span id="downloadProgressText">Loading EmbeddingGemma 2 into browser cache (0%)...</span>
+                </div>
+                <div class="w-36 bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-700">
+                    <div id="downloadProgressBar" class="bg-gradient-to-r from-amber-500 to-orange-500 h-2 rounded-full w-2 transition-all duration-200"></div>
+                </div>
+            </div>
+
+            <!-- Curated Suggestion Pills -->
+            <div id="chipsContainer" class="flex flex-wrap items-center justify-center gap-2 text-xs">
+                <span class="text-slate-500">Quick Topics:</span>
+                <button type="button" onclick="setQuery('cars')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🚗 Cars & Jeeps</button>
+                <button type="button" onclick="setQuery('bombed reichstag ruins and destruction in berlin')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">💥 Reichstag Ruins</button>
+                <button type="button" onclick="setQuery('russian soviet soldiers marching in berlin')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🎖️ Soviet Troops</button>
+                <button type="button" onclick="setQuery('tanks and military armor driving through desert sand')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🛡️ Desert Tanks</button>
+                <button type="button" onclick="setQuery('great sphinx and pyramids of giza in egypt')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🏛️ Great Sphinx & Pyramids</button>
+                <button type="button" onclick="setQuery('civilians and refugees carrying luggage and carts')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🚶 Berlin Refugees</button>
+                <button type="button" onclick="setQuery('american pilots and aircraft on airfield')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">✈️ Airfield Pilots</button>
+                <button type="button" onclick="setQuery('officers relaxing playing golf')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">⛳ Golfing Officers</button>
+            </div>
+        </div>
+
+        <!-- Query Performance Timing Bar -->
+        <div id="timingBar" class="hidden max-w-4xl mx-auto mb-8 bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2.5 text-xs flex items-center justify-between text-slate-400 shadow-md">
+            <div class="flex items-center gap-4 flex-wrap">
+                <span><i class="fa-solid fa-bolt text-amber-400 mr-1"></i> Latency: <b id="timeTotal" class="text-white mono">-</b></span>
+                <span id="termsBadge" class="text-emerald-400 mono">Engine: Live EmbeddingGemma 2</span>
+            </div>
+            <div class="text-amber-400 font-bold" id="matchesCount">0 scenes found</div>
+        </div>
+
+        <!-- Loading Spinner -->
+        <div id="loading" class="hidden text-center py-16">
+            <div class="inline-block animate-spin text-4xl text-amber-400 mb-3"><i class="fa-solid fa-circle-notch"></i></div>
+            <p id="loadingText" class="text-slate-400 text-sm">Encoding query with EmbeddingGemma 2 neural model...</p>
+        </div>
+
+        <!-- Section Title -->
+        <div id="sectionHeader" class="max-w-7xl mx-auto mb-4 flex items-center justify-between">
+            <h3 id="gridTitle" class="text-base font-bold text-white flex items-center gap-2">
+                <i class="fa-solid fa-film text-amber-400"></i>
+                <span>Featured Historical Scenes</span>
+            </h3>
+            <span id="gridSubtitle" class="text-xs text-slate-400">598 sampled keyframes (1 frame / 4 sec)</span>
+        </div>
+
+        <!-- Video Results Grid -->
+        <div id="resultsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="hidden text-center py-16 bg-slate-900/40 border border-slate-800/80 rounded-2xl max-w-2xl mx-auto">
+            <i class="fa-solid fa-magnifying-glass text-slate-600 text-5xl mb-4"></i>
+            <h3 class="text-lg font-bold text-slate-200 mb-2">No direct visual matches found</h3>
+            <p id="emptyPrompt" class="text-slate-400 text-xs max-w-md mx-auto mb-6">
+                This historical archive contains 16mm Kodachrome footage from Berlin in summer 1945 and North Africa / Egypt in 1943.
+            </p>
+            <div class="flex flex-wrap items-center justify-center gap-2 text-xs">
+                <span class="text-slate-500 w-full mb-1">Try one of these documented archival subjects:</span>
+                <button type="button" onclick="setQuery('cars')" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 font-semibold transition">Cars & Jeeps</button>
+                <button type="button" onclick="setQuery('bombed reichstag ruins and destruction in berlin')" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 font-semibold transition">Reichstag Ruins</button>
+                <button type="button" onclick="setQuery('russian soviet soldiers marching in berlin')" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 font-semibold transition">Soviet Red Army</button>
+                <button type="button" onclick="setQuery('tanks and military armor driving through desert sand')" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 font-semibold transition">Desert Tanks</button>
+                <button type="button" onclick="setQuery('great sphinx and pyramids of giza in egypt')" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 font-semibold transition">Great Sphinx</button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal for Video Player & Scene Details -->
+    <div id="modal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full p-6 shadow-2xl relative">
+            <button onclick="closeModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-xl z-10">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            
+            <div class="mb-4 flex items-center justify-between pr-8">
+                <div>
+                    <span id="modalTimestamp" class="text-xs px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30 mono">00:00:00</span>
+                    <span id="modalScore" class="text-xs text-slate-400 ml-2 mono">Cosine: 0.000</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="toggleModalMedia('video')" id="btnViewVideo" class="px-3 py-1 text-xs rounded-lg bg-amber-500 text-slate-950 font-bold">Play Video</button>
+                    <button onclick="toggleModalMedia('frame')" id="btnViewFrame" class="px-3 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 font-semibold hover:bg-slate-700">Still Frame</button>
+                </div>
+            </div>
+            
+            <!-- Video & Frame Viewers -->
+            <div id="videoContainer" class="mb-4 aspect-video w-full rounded-xl overflow-hidden border border-slate-800 bg-black relative">
+                <video id="nativePlayer" controls class="w-full h-full object-contain" preload="none">
+                    Your browser does not support HTML5 video streaming.
+                </video>
+            </div>
+
+            <div id="frameContainer" class="hidden mb-4">
+                <img id="modalImg" src="" alt="Scene Frame" class="w-full rounded-xl border border-slate-800 object-cover max-h-96">
+            </div>
+            
+            <!-- Scene Caption & Metadata -->
+            <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 mb-4">
+                <div class="flex items-center justify-between mb-1">
+                    <div class="text-xs text-amber-400 font-bold flex items-center gap-2">
+                        <i class="fa-solid fa-landmark"></i>
+                        <span>Historical Timeline Context</span>
+                    </div>
+                    <span id="modalMetaTag" class="text-[11px] text-slate-400 mono">George Stevens • SPECOU • 1440x1080 Color</span>
+                </div>
+                <p id="modalCaption" class="text-xs text-slate-200 leading-relaxed mb-3">Historical scene description...</p>
+                
+                <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Captured on 16mm Kodachrome by U.S. Army Signal Corps Special Coverage Unit</span>
+                    <span class="text-emerald-400"><i class="fa-solid fa-circle-check mr-1"></i> Public Domain (LOC)</span>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between">
+                <a id="modalSourceLink" href="https://www.loc.gov/item/2020600759/" target="_blank" 
+                    class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold rounded-xl text-sm flex items-center gap-2 transition border border-slate-700">
+                    <i class="fa-solid fa-building-columns"></i>
+                    <span>View Catalog on Library of Congress (LOC.gov)</span>
+                </a>
+                <button onclick="closeModal()" class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl text-sm transition">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Archival & Technical Metadata Modal -->
+    <div id="metadataModal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl relative">
+            <button onclick="closeMetadataModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-xl z-10">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 text-lg">
+                    <i class="fa-solid fa-landmark"></i>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold text-white">Library of Congress Archival & Technical Metadata</h3>
+                    <p class="text-xs text-slate-400">Complete Cataloging & Video Stream Encoding Properties</p>
+                </div>
+            </div>
+
+            <!-- Metadata Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-xs">
+                <div class="bg-slate-950/60 border border-slate-800 p-4 rounded-xl">
+                    <h4 class="font-bold text-amber-400 mb-2 uppercase tracking-wider text-[11px]">Archival Provenance</h4>
+                    <ul class="space-y-1.5 text-slate-300">
+                        <li><span class="text-slate-500">Title:</span> World War II color footage</li>
+                        <li><span class="text-slate-500">LCCN / Item ID:</span> <span class="mono text-amber-300">2020600759</span></li>
+                        <li><span class="text-slate-500">Director:</span> Lt. Col. George Stevens</li>
+                        <li><span class="text-slate-500">Military Unit:</span> U.S. Army Signal Corps SPECOU</li>
+                        <li><span class="text-slate-500">Cinematographer:</span> William C. Mellor</li>
+                        <li><span class="text-slate-500">Date Range:</span> 1943 (Egypt) & 1945 (Berlin)</li>
+                        <li><span class="text-slate-500">Collection:</span> George Stevens Jr. Collection</li>
+                        <li><span class="text-slate-500">Registry:</span> National Film Registry (Librarian of Congress)</li>
+                        <li><span class="text-slate-500">Rights:</span> Public Domain (U.S. Government Work)</li>
+                    </ul>
+                </div>
+
+                <div class="bg-slate-950/60 border border-slate-800 p-4 rounded-xl">
+                    <h4 class="font-bold text-amber-400 mb-2 uppercase tracking-wider text-[11px]">Technical Stream Specs</h4>
+                    <ul class="space-y-1.5 text-slate-300">
+                        <li><span class="text-slate-500">Medium:</span> 16mm Kodachrome Color Film</li>
+                        <li><span class="text-slate-500">Scan Resolution:</span> 1440x1080 (HD 4:3)</li>
+                        <li><span class="text-slate-500">Frame Rate:</span> 24.0 fps progressive</li>
+                        <li><span class="text-slate-500">Duration:</span> 39m 53.5s (2,393.5 seconds)</li>
+                        <li><span class="text-slate-500">Video Codec:</span> H.264 / AVC Main Profile</li>
+                        <li><span class="text-slate-500">Audio Codec:</span> AAC (48,000 Hz, stereo)</li>
+                        <li><span class="text-slate-500">Embedding Model:</span> Google DeepMind EmbeddingGemma 2</li>
+                        <li><span class="text-slate-500">Vector Count:</span> 598 clips (1 frame / 4 sec)</li>
+                        <li><span class="text-slate-500">Search Engine:</span> In-Memory Float32 Dot Product (0.05 ms)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Archival Summary & Historical Context -->
+            <div class="bg-slate-950/60 border border-slate-800 p-4 rounded-xl mb-6 text-xs text-slate-300">
+                <h4 class="font-bold text-amber-400 mb-1 uppercase tracking-wider text-[11px]">Library of Congress Catalog Summary</h4>
+                <p class="leading-relaxed mb-3">
+                    "In late summer 1945, Stevens and the SPECOU visit Berlin. They visit various buildings and historic sites, including the Olympic Stadium. Berlin is heavily damaged. Civilians clean up the rubble. Refugees are leaving with their belongings. Hamilton and Morse visit the Russian Sector. Multiple groups of Russian troops walk and march through town. Some recreational activities are shown--relaxing at the beach, golfing, visiting the racetrack. In the second half of the film, there are out of sequence shots of North Africa and Egypt, filmed in 1943 before D-Day. Stevens and Mellor visit the Sphinx. American military action is staged in the African desert. Unidentified troops march in the desert."
+                </p>
+                <div class="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400">
+                    <span class="text-slate-500">Production Background:</span> Ordered in late 1943 by General Dwight D. Eisenhower, George Stevens assembled 45 Hollywood cameramen and technicians (the "Stevens Irregulars") to accompany Allied soldiers from North Africa through D-Day, the liberation of Paris, and the fall of Berlin.
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-4 border-t border-slate-800">
+                <a href="https://lccn.loc.gov/2020600759" target="_blank" class="text-amber-400 hover:underline text-xs flex items-center gap-1 font-semibold">
+                    <i class="fa-solid fa-up-right-from-square"></i>
+                    <span>Official LCCN Permalink (lccn.loc.gov/2020600759)</span>
+                </a>
+                <button onclick="closeMetadataModal()" class="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl text-xs transition">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
+        <div class="flex items-center justify-center gap-4 mb-2">
+            <a href="https://huggingface.co/datasets/astr010/loc-ww2-color-film-gemma2" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+                <i class="fa-solid fa-database"></i> Hugging Face Dataset
+            </a>
+            <span>•</span>
+            <a href="https://www.loc.gov/item/2020600759/" target="_blank" class="text-slate-400 hover:text-white flex items-center gap-1">
+                <i class="fa-solid fa-building-columns"></i> Library of Congress
+            </a>
+        </div>
+        Library of Congress Catalog Item 2020600759 • Powered by Google DeepMind EmbeddingGemma 2 • Live Neural Search
+    </footer>
+
+    <!-- Transformers.js In-Browser Neural Engine Module -->
+    <script type="module">
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3';
+
+        env.allowLocalModels = false;
+        window.isNeuralModelReady = false;
+        window.neuralEmbedder = null;
+
+        async function initNeuralPipeline() {
+            const progressWrapper = document.getElementById('modelDownloadBar');
+            const progressText = document.getElementById('downloadProgressText');
+            const progressBar = document.getElementById('downloadProgressBar');
+            const badge = document.getElementById('modelEngineBadge');
+            const badgeText = document.getElementById('modelEngineText');
+            const spinner = document.getElementById('modelSpinner');
+
+            function handleProgress(p) {
+                if (p.status === 'progress' && p.total > 0) {
+                    const pct = Math.round((p.loaded / p.total) * 100);
+                    if (progressBar) progressBar.style.width = `${pct}%`;
+                    const mbLoaded = (p.loaded / (1024 * 1024)).toFixed(1);
+                    const mbTotal = (p.total / (1024 * 1024)).toFixed(1);
+                    if (progressText) {
+                        progressText.innerText = `Downloading live EmbeddingGemma 2: ${pct}% (${mbLoaded} / ${mbTotal} MB - cached in browser)`;
+                    }
+                }
+            }
+
+            try {
+                // Try WebGPU hardware acceleration first, fall back to WebAssembly
+                window.neuralEmbedder = await pipeline('feature-extraction', 'onnx-community/embeddinggemma-2-ONNX', {
+                    dtype: 'q4',
+                    device: 'webgpu',
+                    progress_callback: handleProgress
+                });
+                window.isNeuralModelReady = true;
+                if (progressWrapper) progressWrapper.classList.add('hidden');
+                if (spinner) spinner.className = "fa-solid fa-bolt text-emerald-400";
+                if (badgeText) badgeText.innerText = "Gemma 2 Live (WebGPU)";
+                if (badge) badge.className = "bg-emerald-950/40 px-3 py-2 rounded-lg border border-emerald-500/40 text-emerald-300 flex items-center gap-2 mono font-semibold";
+                console.log("[+] EmbeddingGemma 2 WebGPU neural pipeline ready!");
+                return true;
+            } catch (err) {
+                console.warn("[*] WebGPU not available, falling back to WebAssembly CPU...", err);
+                try {
+                    window.neuralEmbedder = await pipeline('feature-extraction', 'onnx-community/embeddinggemma-2-ONNX', {
+                        dtype: 'q4',
+                        device: 'wasm',
+                        progress_callback: handleProgress
+                    });
+                    window.isNeuralModelReady = true;
+                    if (progressWrapper) progressWrapper.classList.add('hidden');
+                    if (spinner) spinner.className = "fa-solid fa-circle-check text-emerald-400";
+                    if (badgeText) badgeText.innerText = "Gemma 2 Live (WASM CPU)";
+                    if (badge) badge.className = "bg-emerald-950/40 px-3 py-2 rounded-lg border border-emerald-500/40 text-emerald-300 flex items-center gap-2 mono font-semibold";
+                    console.log("[+] EmbeddingGemma 2 WASM CPU neural pipeline ready!");
+                    return true;
+                } catch (e2) {
+                    console.error("[-] In-browser neural pipeline error:", e2);
+                    if (progressWrapper) progressWrapper.classList.add('hidden');
+                    if (spinner) spinner.className = "fa-solid fa-bolt text-amber-400";
+                    if (badgeText) badgeText.innerText = "Fast Vocabulary Mode";
+                    return false;
+                }
+            }
+        }
+
+        window.neuralModelPromise = initNeuralPipeline();
+    </script>
+
+    <!-- Main Search & Video Application Logic -->
+    <script>
+        const LOC_VIDEO_STREAM = "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02531189/02531189.mp4";
+        const TOTAL_FRAMES = 598;
+        const DIMENSIONS = 768;
+
+        let V_MATRIX = null;
+        let FRAMES_METADATA = [];
+        let PRECOMPUTED_QUERIES = {};
+
+        // 6 Curated sample frames showing the full diversity of the film on initial load
+        const FEATURED_INDICES = [170, 230, 108, 326, 473, 261];
+
+        async function initApp() {
+            try {
+                const statElem = document.getElementById('statVectors');
+
+                const [metaRes, queryRes, binRes] = await Promise.all([
+                    fetch('data/frames_metadata.json?v=3').then(r => r.json()),
+                    fetch('data/precomputed_queries.json?v=3').then(r => r.json()),
+                    fetch('data/vectors.bin?v=3').then(r => r.arrayBuffer())
+                ]);
+
+                FRAMES_METADATA = metaRes;
+                PRECOMPUTED_QUERIES = queryRes;
+                V_MATRIX = new Float32Array(binRes);
+
+                statElem.innerText = `${FRAMES_METADATA.length} Vectors (Ready)`;
+
+                // Show diverse initial overview
+                renderFeaturedScenes();
+            } catch (err) {
+                console.error("Initialization error:", err);
+                document.getElementById('statVectors').innerText = "Load failed";
+                alert("Failed to load vectors: " + err.message);
+            }
+        }
+
+        function renderFeaturedScenes() {
+            const grid = document.getElementById('resultsGrid');
+            const timingBar = document.getElementById('timingBar');
+            const emptyState = document.getElementById('emptyState');
+            const gridTitle = document.getElementById('gridTitle');
+            const gridSubtitle = document.getElementById('gridSubtitle');
+
+            grid.innerHTML = '';
+            timingBar.classList.add('hidden');
+            emptyState.classList.add('hidden');
+            gridTitle.innerHTML = '<i class="fa-solid fa-film text-amber-400"></i><span>Featured Historical Scenes</span>';
+            gridSubtitle.innerText = 'Click any topic above or type a search to explore all 40 minutes';
+
+            FEATURED_INDICES.forEach((frameIdx) => {
+                const meta = FRAMES_METADATA[frameIdx];
+                if (!meta) return;
+                const frameSrc = `frames/${meta.f}`;
+
+                const card = document.createElement('div');
+                card.className = "bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden card-hover transition duration-200 flex flex-col justify-between";
+
+                card.innerHTML = `
+                    <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${meta.t}', 'Featured', '${meta.s}', '${encodeURIComponent(meta.c)}')">
+                        <img src="${frameSrc}" alt="Frame ${meta.i}" class="w-full h-52 object-cover group-hover:scale-105 transition duration-300" loading="lazy">
+                        <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
+                        <div class="absolute top-3 left-3 bg-black/75 backdrop-blur px-2.5 py-1 rounded-md text-xs font-bold text-white border border-white/10 mono">
+                            <i class="fa-solid fa-clock text-amber-400 mr-1"></i> ${meta.t}
+                        </div>
+                        <div class="absolute top-3 right-3 bg-slate-800/90 text-amber-400 border border-amber-500/30 px-2.5 py-0.5 rounded-full text-xs font-bold shadow-md mono">
+                            Scene #${meta.i}
+                        </div>
+                        <div class="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-slate-300">
+                            <span class="mono">${meta.f}</span>
+                            <span class="text-amber-400 group-hover:underline flex items-center gap-1 font-semibold">
+                                <span>Play Scene</span>
+                                <i class="fa-solid fa-play text-[10px]"></i>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-slate-950/60 border-t border-slate-800/80 flex flex-col justify-between flex-1">
+                        <div class="flex items-center gap-2 text-[11px] text-amber-400/90 font-semibold mb-1">
+                            <i class="fa-solid fa-clapperboard text-[10px]"></i>
+                            <span>George Stevens • 1440x1080 Color</span>
+                        </div>
+                        <p class="text-xs text-slate-300 line-clamp-2 mb-3 leading-relaxed">${meta.c}</p>
+                        <div class="flex items-center justify-between pt-2 border-t border-slate-900 text-xs">
+                            <span class="text-slate-500 mono">${meta.s}s - ${(meta.s + 4.0).toFixed(1)}s</span>
+                            <button onclick="openModal('${frameSrc}', '${meta.t}', 'Featured', '${meta.s}', '${encodeURIComponent(meta.c)}')"
+                                class="text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 transition">
+                                <i class="fa-solid fa-circle-play"></i>
+                                <span>Watch Scene</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function setQuery(text) {
+            document.getElementById('searchInput').value = text;
+            executeSearch();
+        }
+
+        function setQueryAndCloseModal(text) {
+            closeMetadataModal();
+            setQuery(text);
+        }
+
+        function openMetadataModal() {
+            document.getElementById('metadataModal').classList.remove('hidden');
+        }
+
+        function closeMetadataModal() {
+            document.getElementById('metadataModal').classList.add('hidden');
+        }
+
+        document.getElementById('searchForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            executeSearch();
+        });
+
+        // Fast vocabulary resolution fallback
+        function resolveVocabularyVector(queryText) {
+            const clean = queryText.toLowerCase().trim();
+            if (PRECOMPUTED_QUERIES[clean]) {
+                return { vec: PRECOMPUTED_QUERIES[clean], terms: [clean] };
+            }
+
+            const tokens = clean.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(t => t.length > 2);
+            if (tokens.length === 0) return null;
+
+            const matchedVecs = [];
+            const matchedTerms = [];
+
+            // 1. Check exact key matches
+            for (const key of Object.keys(PRECOMPUTED_QUERIES)) {
+                if (clean.includes(key)) {
+                    matchedVecs.push(PRECOMPUTED_QUERIES[key]);
+                    matchedTerms.push(key);
+                }
+            }
+
+            // 2. Check token level matches
+            if (matchedVecs.length === 0) {
+                for (const token of tokens) {
+                    let found = null;
+                    if (PRECOMPUTED_QUERIES[token]) {
+                        found = token;
+                    } else {
+                        // Check singular/plural or prefix matching
+                        for (const key of Object.keys(PRECOMPUTED_QUERIES)) {
+                            if (key.length <= 15 && (key.startsWith(token) || token.startsWith(key) || key === token + "s" || key + "s" === token)) {
+                                found = key;
+                                break;
+                            }
+                        }
+                    }
+                    if (found && !matchedTerms.includes(found)) {
+                        matchedVecs.push(PRECOMPUTED_QUERIES[found]);
+                        matchedTerms.push(found);
+                    }
+                }
+            }
+
+            if (matchedVecs.length === 0) return null;
+
+            const blended = new Float32Array(DIMENSIONS);
+            for (const v of matchedVecs) {
+                for (let d = 0; d < DIMENSIONS; d++) blended[d] += v[d];
+            }
+            let norm = 0;
+            for (let d = 0; d < DIMENSIONS; d++) norm += blended[d] * blended[d];
+            norm = Math.sqrt(norm);
+            if (norm > 0) {
+                for (let d = 0; d < DIMENSIONS; d++) blended[d] /= norm;
+            }
+            return { vec: blended, terms: matchedTerms };
+        }
+
+        async function executeSearch() {
+            if (!V_MATRIX || FRAMES_METADATA.length === 0) return;
+
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                renderFeaturedScenes();
+                return;
+            }
+
+            const loading = document.getElementById('loading');
+            const loadingText = document.getElementById('loadingText');
+            const grid = document.getElementById('resultsGrid');
+            const timingBar = document.getElementById('timingBar');
+            const emptyState = document.getElementById('emptyState');
+            const gridTitle = document.getElementById('gridTitle');
+            const gridSubtitle = document.getElementById('gridSubtitle');
+
+            grid.innerHTML = '';
+            timingBar.classList.add('hidden');
+            emptyState.classList.add('hidden');
+            loading.classList.remove('hidden');
+
+            const t0 = performance.now();
+            let qVec = null;
+            let engineTag = "Live Neural Model (EmbeddingGemma 2)";
+
+            // 1. LIVE IN-BROWSER NEURAL INFERENCE (If pipeline ready)
+            if (window.isNeuralModelReady && window.neuralEmbedder) {
+                loadingText.innerText = `Encoding "${query}" on-the-fly with live EmbeddingGemma 2...`;
+                try {
+                    const formatted = `task: search result | query: ${query}`;
+                    const output = await window.neuralEmbedder(formatted, {
+                        pooling: 'mean',
+                        normalize: true,
+                    });
+                    qVec = Array.from(output.data);
+                    engineTag = "Live Neural Engine (EmbeddingGemma 2)";
+                } catch (err) {
+                    console.error("Live inference error:", err);
+                }
+            }
+
+            // 2. Fast Vocabulary Match (if model still downloading)
+            if (!qVec) {
+                const res = resolveVocabularyVector(query);
+                if (res) {
+                    qVec = res.vec;
+                    engineTag = `Vocabulary Engine (${res.terms.slice(0, 2).join(", ")})`;
+                }
+            }
+
+            // 3. If query is novel and model is still downloading, wait for neural model to complete
+            if (!qVec && window.neuralModelPromise) {
+                loadingText.innerText = `Waiting for live EmbeddingGemma 2 to finish loading in browser cache to encode "${query}"...`;
+                await window.neuralModelPromise;
+                if (window.isNeuralModelReady && window.neuralEmbedder) {
+                    loadingText.innerText = `Encoding "${query}" on-the-fly with live EmbeddingGemma 2...`;
+                    try {
+                        const formatted = `task: search result | query: ${query}`;
+                        const output = await window.neuralEmbedder(formatted, {
+                            pooling: 'mean',
+                            normalize: true,
+                        });
+                        qVec = Array.from(output.data);
+                        engineTag = "Live Neural Engine (EmbeddingGemma 2)";
+                    } catch (err) {
+                        console.error("Live inference error after wait:", err);
+                    }
+                }
+            }
+
+            if (!qVec) {
+                loading.classList.add('hidden');
+                timingBar.classList.add('hidden');
+                document.getElementById('sectionHeader').classList.add('hidden');
+                emptyState.classList.remove('hidden');
+                document.getElementById('emptyPrompt').innerText = `No archival scenes matched "${query}". (The neural model is still initializing in the browser; please wait a moment or click one of the quick topics).`;
+                return;
+            }
+
+            const elapsedEmbed = (performance.now() - t0).toFixed(1);
+
+            // 3. Compute cosine dot products across all 598 frames
+            const t1 = performance.now();
+            const scores = new Float32Array(TOTAL_FRAMES);
+            for (let i = 0; i < TOTAL_FRAMES; i++) {
+                let dot = 0.0;
+                const offset = i * DIMENSIONS;
+                for (let d = 0; d < DIMENSIONS; d++) {
+                    dot += V_MATRIX[offset + d] * qVec[d];
+                }
+                scores[i] = dot;
+            }
+            const elapsedDot = (performance.now() - t1).toFixed(2);
+
+            // 4. Sort top 9 indices
+            const indices = Array.from({length: TOTAL_FRAMES}, (_, i) => i);
+            indices.sort((a, b) => scores[b] - scores[a]);
+            const topIndices = indices.slice(0, 9);
+
+            loading.classList.add('hidden');
+            document.getElementById('sectionHeader').classList.remove('hidden');
+            timingBar.classList.remove('hidden');
+            document.getElementById('timeTotal').innerText = `${elapsedEmbed} ms (Embed) + ${elapsedDot} ms (Dot)`;
+            document.getElementById('matchesCount').innerText = `${topIndices.length} scenes found`;
+            document.getElementById('termsBadge').innerText = `Engine: ${engineTag}`;
+
+            gridTitle.innerHTML = `<i class="fa-solid fa-magnifying-glass text-amber-400"></i><span>Matches for "${query}"</span>`;
+            gridSubtitle.innerText = `Ranked by EmbeddingGemma 2 cosine similarity`;
+
+            topIndices.forEach((frameIdx, rank) => {
+                const meta = FRAMES_METADATA[frameIdx];
+                const score = scores[frameIdx].toFixed(3);
+                const frameSrc = `frames/${meta.f}`;
+
+                const card = document.createElement('div');
+                card.className = "bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden card-hover transition duration-200 flex flex-col justify-between";
+
+                card.innerHTML = `
+                    <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${meta.t}', '${score}', '${meta.s}', '${encodeURIComponent(meta.c)}')">
+                        <img src="${frameSrc}" alt="Frame ${meta.i}" class="w-full h-52 object-cover group-hover:scale-105 transition duration-300" loading="lazy">
+                        <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
+                        <div class="absolute top-3 left-3 bg-black/75 backdrop-blur px-2.5 py-1 rounded-md text-xs font-bold text-white border border-white/10 mono">
+                            <i class="fa-solid fa-clock text-amber-400 mr-1"></i> ${meta.t}
+                        </div>
+                        <div class="absolute top-3 right-3 score-pill text-white px-2.5 py-0.5 rounded-full text-xs font-bold shadow-md mono">
+                            #${rank + 1} • ${score}
+                        </div>
+                        <div class="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-slate-300">
+                            <span class="mono">Frame #${meta.i}</span>
+                            <span class="text-amber-400 group-hover:underline flex items-center gap-1 font-semibold">
+                                <span>Play & Inspect</span>
+                                <i class="fa-solid fa-play text-[10px]"></i>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-slate-950/60 border-t border-slate-800/80 flex flex-col justify-between flex-1">
+                        <div class="flex items-center gap-2 text-[11px] text-amber-400/90 font-semibold mb-1">
+                            <i class="fa-solid fa-clapperboard text-[10px]"></i>
+                            <span>George Stevens • 1440x1080 Color</span>
+                        </div>
+                        <p class="text-xs text-slate-300 line-clamp-2 mb-3 leading-relaxed">${meta.c}</p>
+                        <div class="flex items-center justify-between pt-2 border-t border-slate-900 text-xs">
+                            <span class="text-slate-500 mono">${meta.s}s - ${(meta.s + 4.0).toFixed(1)}s</span>
+                            <button onclick="openModal('${frameSrc}', '${meta.t}', '${score}', '${meta.s}', '${encodeURIComponent(meta.c)}')"
+                                class="text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 transition">
+                                <i class="fa-solid fa-circle-play"></i>
+                                <span>Watch Scene</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function toggleModalMedia(view) {
+            const frameC = document.getElementById('frameContainer');
+            const videoC = document.getElementById('videoContainer');
+            const btnF = document.getElementById('btnViewFrame');
+            const btnV = document.getElementById('btnViewVideo');
+
+            if (view === 'frame') {
+                frameC.classList.remove('hidden');
+                videoC.classList.add('hidden');
+                btnF.className = "px-3 py-1 text-xs rounded-lg bg-amber-500 text-slate-950 font-bold";
+                btnV.className = "px-3 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 font-semibold";
+            } else {
+                frameC.classList.add('hidden');
+                videoC.classList.remove('hidden');
+                btnV.className = "px-3 py-1 text-xs rounded-lg bg-amber-500 text-slate-950 font-bold";
+                btnF.className = "px-3 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 font-semibold";
+            }
+        }
+
+        function openModal(imgSrc, timestamp, score, startTimeSec, rawContext) {
+            document.getElementById('modalImg').src = imgSrc;
+            document.getElementById('modalTimestamp').innerText = timestamp;
+            document.getElementById('modalScore').innerText = `Cosine: ${score}`;
+            document.getElementById('modalCaption').innerText = rawContext ? decodeURIComponent(rawContext) : "World War II 16mm Kodachrome Color Footage";
+
+            const nativePlayer = document.getElementById('nativePlayer');
+            const startSec = Math.max(0, Math.floor(parseFloat(startTimeSec) || 0));
+
+            // Only attach stream URL on demand to save network bandwidth
+            nativePlayer.src = `${LOC_VIDEO_STREAM}#t=${startSec}`;
+            nativePlayer.currentTime = startSec;
+            nativePlayer.play().catch(e => console.log("Waiting for user gesture to play"));
+
+            toggleModalMedia('video');
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.add('hidden');
+            const nativePlayer = document.getElementById('nativePlayer');
+            nativePlayer.pause();
+            // Release stream connection so it stops buffering
+            nativePlayer.removeAttribute('src');
+            nativePlayer.load();
+        }
+
+        // Initialize on load
+        window.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
