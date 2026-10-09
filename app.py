@@ -1,7 +1,8 @@
 """
 FastAPI Server & Video Search UI for Library of Congress WWII Color Film Archive.
 Connects Pinecone Serverless Index (rick-morty-gemma2-video) namespace 'loc-ww2-color' (598 vectors)
-with OpenAI 768-dim Embeddings, local frame visualization, and HTML5 video streaming with timestamp seeking.
+with OpenAI 768-dim Embeddings, local frame visualization, HTML5 video streaming with timestamp seeking,
+and comprehensive Library of Congress archival & technical video metadata.
 (Legacy namespace 'default' for Rick and Morty is preserved).
 """
 
@@ -40,9 +41,16 @@ BASE_DIR = Path(__file__).parent
 WW2_FRAMES_DIR = BASE_DIR / "data" / "loc_ww2_frames"
 RM_FRAMES_DIR = BASE_DIR / "data" / "temp_4s_frames"
 WW2_VIDEO_FILE = BASE_DIR / "data" / "videos" / "ww2_color_stevens_2020600759.mp4"
+METADATA_FILE = BASE_DIR / "data" / "video_metadata_2020600759.json"
 
 if not PINECONE_API_KEY or not OPENAI_API_KEY:
     raise RuntimeError("Missing PINECONE_API_KEY or OPENAI_API_KEY in environment or .env file.")
+
+# Load structured video metadata
+VIDEO_METADATA: Dict[str, Any] = {}
+if METADATA_FILE.exists():
+    with open(METADATA_FILE) as f:
+        VIDEO_METADATA = json.load(f)
 
 # Initialize Clients
 pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -105,9 +113,17 @@ async def stream_video(range: Optional[str] = Header(None)):
     return StreamingResponse(iter_file(), status_code=206 if range else 200, headers=headers)
 
 
+@app.get("/api/metadata")
+async def get_metadata():
+    """Returns the full archival cataloging and technical video stream metadata."""
+    if not VIDEO_METADATA:
+        raise HTTPException(status_code=404, detail="Metadata file not found.")
+    return VIDEO_METADATA
+
+
 @app.get("/api/stats")
 async def get_stats():
-    """Returns Pinecone index statistics and available namespace datasets."""
+    """Returns Pinecone index statistics and available namespace datasets with video metadata."""
     try:
         stats = index.describe_index_stats()
         ww2_frames_count = len(list(WW2_FRAMES_DIR.glob("*.jpg"))) if WW2_FRAMES_DIR.exists() else 0
@@ -117,6 +133,9 @@ async def get_stats():
         for ns_name, ns_stat in stats.namespaces.items():
             namespaces_info[ns_name] = ns_stat.vector_count
 
+        catalog = VIDEO_METADATA.get("catalog", {})
+        technical = VIDEO_METADATA.get("technical_stream", {})
+
         return {
             "index_name": INDEX_NAME,
             "dimension": stats.dimension,
@@ -125,13 +144,21 @@ async def get_stats():
             "namespaces": namespaces_info,
             "active_namespace": "loc-ww2-color",
             "active_video": {
-                "title": "World War II color footage -- Stevens and SPECOU in Berlin, North Africa and Egypt before D-Day",
-                "item_id": "2020600759",
-                "duration": "39m 54s (2,393.5 seconds)",
+                "lccn": catalog.get("lccn", "2020600759"),
+                "title": catalog.get("title", "World War II color footage"),
+                "director": "George Stevens (Lt. Col., U.S. Army Signal Corps)",
+                "unit": "Special Coverage Unit (SPECOU)",
+                "cinematographer": "William C. Mellor",
+                "dates": catalog.get("date_display", "1943 - 1945"),
+                "national_film_registry": catalog.get("national_film_registry", True),
+                "duration": technical.get("duration_formatted", "39m 54s"),
+                "resolution": "1440x1080 (HD 4:3)",
+                "codec": "H.264 / AAC 24fps",
                 "granularity": "1 frame every 4.0 seconds (598 clips)",
-                "loc_url": "https://www.loc.gov/item/2020600759/",
+                "loc_url": catalog.get("item_url", "https://www.loc.gov/item/2020600759/"),
                 "local_frames_available": ww2_frames_count,
                 "has_local_video": WW2_VIDEO_FILE.exists(),
+                "file_size_mb": technical.get("file_size_mb", 892.17),
             },
             "legacy_video": {
                 "title": "Rick and Morty | Season 9 Battle Scenes",
@@ -152,7 +179,7 @@ async def search_video(
     """
     1. Embeds query into 768-dimensional space using OpenAI text-embedding-3-small (dimensions=768)
     2. Queries Pinecone index under the specified namespace
-    3. Resolves local frame images, metadata captions, and timestamps
+    3. Resolves local frame images, metadata captions, archival properties, and timestamps
     """
     if not q.strip():
         raise HTTPException(status_code=400, detail="Query string cannot be empty.")
@@ -200,11 +227,21 @@ async def search_video(
             frame_url = f"/frames/ww2/{frame_filename}"
             caption = meta.get("caption", "Archival WWII footage captured by George Stevens.")
             source_link = meta.get("loc_url", "https://www.loc.gov/item/2020600759/")
+            director = meta.get("director", "George Stevens")
+            unit = meta.get("unit", "U.S. Army Signal Corps SPECOU")
+            resolution = meta.get("resolution", "1440x1080")
+            medium = meta.get("medium", "16mm Kodachrome Color")
+            dates = meta.get("dates", "1943-1945")
         else:
             frame_filename = meta.get("local_frame_file") or f"clip_{clip_index:04d}_mid.jpg"
             frame_url = f"/frames/rm/{frame_filename}"
             caption = f"Rick and Morty Battle Scenes clip #{clip_index}"
             source_link = meta.get("youtube_url", "https://youtu.be/9Rul9N1LREQ")
+            director = "Adult Swim"
+            unit = "Animation Studio"
+            resolution = "1080p HD"
+            medium = "Digital 2D Animation"
+            dates = "2024"
 
         matches.append({
             "id": m.id,
@@ -218,6 +255,11 @@ async def search_video(
             "frame_filename": frame_filename,
             "source_link": source_link,
             "namespace": namespace,
+            "director": director,
+            "unit": unit,
+            "resolution": resolution,
+            "medium": medium,
+            "dates": dates,
         })
 
     return {
@@ -281,7 +323,7 @@ async def serve_ui():
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #090d16; color: #f1f5f9; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #080c15; color: #f1f5f9; }
         .mono { font-family: 'JetBrains Mono', monospace; }
         .amber-glow { box-shadow: 0 0 35px rgba(245, 158, 11, 0.2); }
         .card-hover:hover { transform: translateY(-4px); box-shadow: 0 12px 30px rgba(245, 158, 11, 0.15); }
@@ -290,7 +332,7 @@ async def serve_ui():
 </head>
 <body class="min-h-screen flex flex-col justify-between">
     <!-- Navbar -->
-    <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
             <div class="flex items-center space-x-3">
                 <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 text-lg font-bold shadow-md">
@@ -301,12 +343,19 @@ async def serve_ui():
                         LOC Moving Image Semantic Search
                         <span class="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">Pinecone Serverless</span>
                     </h1>
-                    <p class="text-xs text-slate-400">Library of Congress • WWII Color Archival Footage (Item 2020600759)</p>
+                    <p class="text-xs text-slate-400">Library of Congress • WWII Color Archival Footage (LCCN 2020600759)</p>
                 </div>
             </div>
             
-            <!-- Namespace & Stats Controls -->
+            <!-- Controls & Metadata Trigger -->
             <div class="flex items-center space-x-3 text-xs">
+                <!-- Archival Metadata Button -->
+                <button onclick="openMetadataModal()" 
+                    class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 font-semibold border border-amber-500/30 transition flex items-center gap-1.5 shadow">
+                    <i class="fa-solid fa-circle-info"></i>
+                    <span>Film Metadata</span>
+                </button>
+
                 <!-- Namespace Switcher -->
                 <div class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
                     <button id="tabWw2" onclick="switchNamespace('loc-ww2-color')" 
@@ -331,17 +380,33 @@ async def serve_ui():
 
     <!-- Main Container -->
     <main class="max-w-7xl mx-auto px-6 py-8 flex-1 w-full">
+        <!-- Film Quick Metadata Banner -->
+        <div class="max-w-4xl mx-auto mb-8 bg-slate-900/60 border border-slate-800/90 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 text-xs">
+            <div class="flex items-center gap-3">
+                <span class="px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 mono">LCCN 2020600759</span>
+                <span class="text-slate-300"><i class="fa-solid fa-user-tie text-amber-400 mr-1"></i> Dir: <b>George Stevens</b> (SPECOU)</span>
+                <span class="text-slate-400 hidden sm:inline">•</span>
+                <span class="text-slate-300 hidden sm:inline"><i class="fa-solid fa-camera text-blue-400 mr-1"></i> <b>William C. Mellor</b></span>
+                <span class="text-slate-400 hidden md:inline">•</span>
+                <span class="text-slate-300 hidden md:inline"><i class="fa-solid fa-calendar text-emerald-400 mr-1"></i> <b>1943–1945</b></span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-medium">1440x1080 HD Kodachrome</span>
+                <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-medium">National Film Registry</span>
+                <a href="https://www.loc.gov/item/2020600759/" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1 font-semibold">
+                    <span>LOC.gov</span>
+                    <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                </a>
+            </div>
+        </div>
+
         <!-- Hero Section -->
         <div class="text-center max-w-3xl mx-auto mb-10">
-            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold mb-4">
-                <i class="fa-solid fa-circle-check"></i>
-                <span id="heroBadge">George Stevens SPECOU in Berlin & North Africa (1943–1945) • 39m 54s</span>
-            </div>
             <h2 class="text-4xl font-extrabold tracking-tight mb-3 text-white" id="heroTitle">
                 Search 40 Minutes of <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">WWII Color Footage</span>
             </h2>
             <p class="text-slate-400 text-sm mb-6" id="heroDesc">
-                Natural-language visual search directly into authentic 16mm/35mm Kodachrome color film digitized by the Library of Congress.
+                Natural-language visual search directly into authentic 16mm Kodachrome color film digitized by the Library of Congress.
             </p>
 
             <!-- Search Form -->
@@ -368,6 +433,7 @@ async def serve_ui():
                 <button onclick="setQuery('Tanks and military armor driving through desert sand')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🛡️ Desert Tanks</button>
                 <button onclick="setQuery('American pilots and aircraft on airfield')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">✈️ Airfield Pilots</button>
                 <button onclick="setQuery('Civilians and refugees carrying luggage and carts')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🚶 Berlin Refugees</button>
+                <button onclick="setQuery('Olympiastadion Berlin stadium empty grounds')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🏟️ Berlin Olympic Stadium</button>
             </div>
         </div>
 
@@ -432,11 +498,14 @@ async def serve_ui():
                 <img id="modalImg" src="" alt="Scene Frame" class="w-full rounded-xl border border-slate-800 object-cover max-h-96">
             </div>
             
-            <!-- Scene Caption & AI Description Box -->
+            <!-- Scene Caption & Metadata -->
             <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 mb-4">
-                <div class="text-xs text-amber-400 font-bold mb-1 flex items-center gap-2">
-                    <i class="fa-solid fa-quote-left"></i>
-                    <span>Indexed Scene Caption</span>
+                <div class="flex items-center justify-between mb-1">
+                    <div class="text-xs text-amber-400 font-bold flex items-center gap-2">
+                        <i class="fa-solid fa-quote-left"></i>
+                        <span>Visual Scene Caption</span>
+                    </div>
+                    <span id="modalMetaTag" class="text-[11px] text-slate-400 mono">George Stevens • SPECOU • 1080p Color</span>
                 </div>
                 <p id="modalCaption" class="text-xs text-slate-200 leading-relaxed mb-3 italic">Loading caption...</p>
                 
@@ -453,9 +522,96 @@ async def serve_ui():
                 <a id="modalSourceLink" href="https://www.loc.gov/item/2020600759/" target="_blank" 
                     class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold rounded-xl text-sm flex items-center gap-2 transition border border-slate-700">
                     <i class="fa-solid fa-building-columns"></i>
-                    <span id="modalSourceText">View on Library of Congress (LOC.gov)</span>
+                    <span id="modalSourceText">View Catalog on Library of Congress (LOC.gov)</span>
                 </a>
                 <button onclick="closeModal()" class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl text-sm transition">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Archival & Technical Metadata Modal -->
+    <div id="metadataModal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl relative">
+            <button onclick="closeMetadataModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-xl z-10">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 text-lg">
+                    <i class="fa-solid fa-landmark"></i>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold text-white">Library of Congress Archival & Technical Metadata</h3>
+                    <p class="text-xs text-slate-400">Complete Cataloging & Video Stream Encoding Properties</p>
+                </div>
+            </div>
+
+            <!-- Metadata Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-xs">
+                <div class="bg-slate-950/60 border border-slate-800 p-4 rounded-xl">
+                    <h4 class="font-bold text-amber-400 mb-2 uppercase tracking-wider text-[11px]">Archival Provenance</h4>
+                    <ul class="space-y-1.5 text-slate-300">
+                        <li><span class="text-slate-500">Title:</span> World War II color footage</li>
+                        <li><span class="text-slate-500">LCCN / Item ID:</span> <span class="mono text-amber-300">2020600759</span></li>
+                        <li><span class="text-slate-500">Director:</span> Lt. Col. George Stevens</li>
+                        <li><span class="text-slate-500">Military Unit:</span> U.S. Army Signal Corps SPECOU</li>
+                        <li><span class="text-slate-500">Cinematographer:</span> William C. Mellor</li>
+                        <li><span class="text-slate-500">Date Range:</span> 1943 (Egypt) & 1945 (Berlin)</li>
+                        <li><span class="text-slate-500">Collection:</span> George Stevens Jr. Collection</li>
+                        <li><span class="text-slate-500">Registry:</span> National Film Registry (Librarian of Congress)</li>
+                        <li><span class="text-slate-500">Rights:</span> Public Domain (U.S. Government Work)</li>
+                    </ul>
+                </div>
+
+                <div class="bg-slate-950/60 border border-slate-800 p-4 rounded-xl">
+                    <h4 class="font-bold text-amber-400 mb-2 uppercase tracking-wider text-[11px]">Technical Stream Specs</h4>
+                    <ul class="space-y-1.5 text-slate-300">
+                        <li><span class="text-slate-500">Medium:</span> 16mm Kodachrome Color Film</li>
+                        <li><span class="text-slate-500">Scan Resolution:</span> 1440x1080 (HD 4:3)</li>
+                        <li><span class="text-slate-500">Frame Rate:</span> 24.0 fps progressive</li>
+                        <li><span class="text-slate-500">Duration:</span> 39m 53.5s (2,393.5 seconds)</li>
+                        <li><span class="text-slate-500">Video Codec:</span> H.264 / AVC Main Profile</li>
+                        <li><span class="text-slate-500">Audio Codec:</span> AAC (48,000 Hz, stereo)</li>
+                        <li><span class="text-slate-500">Overall Bitrate:</span> 3,126 kbps</li>
+                        <li><span class="text-slate-500">File Size:</span> 935.5 MB (935,509,658 bytes)</li>
+                        <li><span class="text-slate-500">Pinecone Vectors:</span> 598 clips (1 frame / 4 sec)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Archival Summary & Historical Context -->
+            <div class="bg-slate-950/60 border border-slate-800 p-4 rounded-xl mb-6 text-xs text-slate-300">
+                <h4 class="font-bold text-amber-400 mb-1 uppercase tracking-wider text-[11px]">Library of Congress Catalog Summary</h4>
+                <p class="leading-relaxed mb-3">
+                    "In late summer 1945, Stevens and the SPECOU visit Berlin. They visit various buildings and historic sites, including the Olympic Stadium. Berlin is heavily damaged. Civilians clean up the rubble. Refugees are leaving with their belongings. Hamilton and Morse visit the Russian Sector. Multiple groups of Russian troops walk and march through town. Some recreational activities are shown--relaxing at the beach, golfing, visiting the racetrack. In the second half of the film, there are out of sequence shots of North Africa and Egypt, filmed in 1943 before D-Day. Stevens and Mellor visit the Sphinx. American military action is staged in the African desert. Unidentified troops march in the desert."
+                </p>
+                <div class="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400">
+                    <span class="text-slate-500">Production Background:</span> Ordered in late 1943 by General Dwight D. Eisenhower, George Stevens assembled 45 Hollywood cameramen and technicians (the "Stevens Irregulars") to accompany Allied soldiers from North Africa through D-Day, the liberation of Paris, and the fall of Berlin.
+                </div>
+            </div>
+
+            <!-- Subject Tags -->
+            <div class="mb-4">
+                <h4 class="font-bold text-amber-400 mb-2 uppercase tracking-wider text-[11px]">Cataloged Historical Subjects (Click to Search)</h4>
+                <div class="flex flex-wrap gap-1.5 text-xs">
+                    <button onclick="setQueryAndCloseModal('Great Sphinx and Pyramids of Giza in Egypt')" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition">Egypt -- Giza (Sphinx)</button>
+                    <button onclick="setQueryAndCloseModal('Bombed Reichstag ruins and destruction in Berlin')" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition">Berlin -- Reichstag Ruins</button>
+                    <button onclick="setQueryAndCloseModal('Olympiastadion Berlin stadium empty grounds')" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition">Olympiastadion (Berlin)</button>
+                    <button onclick="setQueryAndCloseModal('Tanks and military armor driving through desert sand')" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition">North Africa Desert Tanks</button>
+                    <button onclick="setQueryAndCloseModal('Civilians and refugees carrying luggage and carts')" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition">Civilians in War & Refugees</button>
+                    <button onclick="setQueryAndCloseModal('Russian troops marching in Soviet sector Berlin')" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition">Soviet Sector Troops</button>
+                    <button onclick="setQueryAndCloseModal('American pilots and aircraft on airfield')" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition">Airfield Pilots & Aircraft</button>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-4 border-t border-slate-800">
+                <a href="https://lccn.loc.gov/2020600759" target="_blank" class="text-amber-400 hover:underline text-xs flex items-center gap-1 font-semibold">
+                    <i class="fa-solid fa-up-right-from-square"></i>
+                    <span>Official LCCN Permalink (lccn.loc.gov/2020600759)</span>
+                </a>
+                <button onclick="closeMetadataModal()" class="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl text-xs transition">
                     Close
                 </button>
             </div>
@@ -487,7 +643,6 @@ async def serve_ui():
             const tabWw2 = document.getElementById('tabWw2');
             const tabRm = document.getElementById('tabRm');
             const chips = document.getElementById('chipsContainer');
-            const heroBadge = document.getElementById('heroBadge');
             const heroTitle = document.getElementById('heroTitle');
             const heroDesc = document.getElementById('heroDesc');
             const searchInput = document.getElementById('searchInput');
@@ -495,9 +650,8 @@ async def serve_ui():
             if (ns === 'loc-ww2-color') {
                 tabWw2.className = "px-3 py-1.5 rounded-lg font-semibold bg-amber-500 text-slate-950 shadow transition flex items-center gap-1.5";
                 tabRm.className = "px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition flex items-center gap-1.5";
-                heroBadge.innerText = "George Stevens SPECOU in Berlin & North Africa (1943–1945) • 39m 54s";
                 heroTitle.innerHTML = 'Search 40 Minutes of <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">WWII Color Footage</span>';
-                heroDesc.innerText = "Natural-language visual search directly into authentic 16mm/35mm Kodachrome color film digitized by the Library of Congress.";
+                heroDesc.innerText = "Natural-language visual search directly into authentic 16mm Kodachrome color film digitized by the Library of Congress.";
                 searchInput.value = "Great Sphinx and pyramids in Egypt";
                 
                 chips.innerHTML = `
@@ -507,11 +661,11 @@ async def serve_ui():
                     <button onclick="setQuery('Tanks and military armor driving through desert sand')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🛡️ Desert Tanks</button>
                     <button onclick="setQuery('American pilots and aircraft on airfield')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">✈️ Airfield Pilots</button>
                     <button onclick="setQuery('Civilians and refugees carrying luggage and carts')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🚶 Berlin Refugees</button>
+                    <button onclick="setQuery('Olympiastadion Berlin stadium empty grounds')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🏟️ Berlin Olympic Stadium</button>
                 `;
             } else {
                 tabRm.className = "px-3 py-1.5 rounded-lg font-semibold bg-emerald-500 text-slate-950 shadow transition flex items-center gap-1.5";
                 tabWw2.className = "px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition flex items-center gap-1.5";
-                heroBadge.innerText = "Rick and Morty Season 9 Battle Scenes • 30m 4s (Legacy Namespace)";
                 heroTitle.innerHTML = 'Search Rick and Morty <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">Battle Scenes</span>';
                 heroDesc.innerText = "Legacy namespace search across 452 cartoon battle scene frames.";
                 searchInput.value = "space dogfight battle with laser guns";
@@ -529,6 +683,19 @@ async def serve_ui():
         function setQuery(text) {
             document.getElementById('searchInput').value = text;
             executeSearch();
+        }
+
+        function setQueryAndCloseModal(text) {
+            closeMetadataModal();
+            setQuery(text);
+        }
+
+        function openMetadataModal() {
+            document.getElementById('metadataModal').classList.remove('hidden');
+        }
+
+        function closeMetadataModal() {
+            document.getElementById('metadataModal').classList.add('hidden');
         }
 
         document.getElementById('searchForm').addEventListener('submit', (e) => {
@@ -571,7 +738,7 @@ async def serve_ui():
                         const isWw2 = (data.namespace === 'loc-ww2-color');
 
                         card.innerHTML = `
-                            <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.caption)}')">
+                            <div class="relative cursor-pointer group" onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.caption)}', '${clip.director}', '${clip.resolution}')">
                                 <img src="${frameSrc}" alt="Clip ${clip.clip_index}" class="w-full h-52 object-cover group-hover:scale-105 transition duration-300">
                                 <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
                                 <div class="absolute top-3 left-3 bg-black/75 backdrop-blur px-2.5 py-1 rounded-md text-xs font-bold text-white border border-white/10 mono">
@@ -589,10 +756,14 @@ async def serve_ui():
                                 </div>
                             </div>
                             <div class="p-4 bg-slate-950/60 border-t border-slate-800/80 flex flex-col justify-between flex-1">
+                                <div class="flex items-center gap-2 text-[11px] text-amber-400/90 font-semibold mb-1">
+                                    <i class="fa-solid fa-clapperboard text-[10px]"></i>
+                                    <span>${clip.director} • ${clip.resolution}</span>
+                                </div>
                                 <p class="text-xs text-slate-300 line-clamp-2 mb-3 leading-relaxed">${clip.caption}</p>
                                 <div class="flex items-center justify-between pt-2 border-t border-slate-900 text-xs">
                                     <span class="text-slate-500 mono">${clip.start_time_s}s - ${clip.end_time_s}s</span>
-                                    <button onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.caption)}')"
+                                    <button onclick="openModal('${frameSrc}', '${clip.timestamp}', '${clip.score}', '${clip.source_link}', '${clip.frame_filename}', '${clip.start_time_s}', '${encodeURIComponent(clip.caption)}', '${clip.director}', '${clip.resolution}')"
                                         class="${isWw2 ? 'text-amber-400 hover:text-amber-300' : 'text-emerald-400 hover:text-emerald-300'} font-semibold flex items-center gap-1 transition">
                                         <i class="fa-solid fa-circle-play"></i>
                                         <span>Watch Scene</span>
@@ -630,12 +801,13 @@ async def serve_ui():
             }
         }
 
-        async function openModal(imgSrc, timestamp, score, sourceLink, frameFile, startTimeSec, rawCaption) {
+        async function openModal(imgSrc, timestamp, score, sourceLink, frameFile, startTimeSec, rawCaption, director, res) {
             document.getElementById('modalImg').src = imgSrc;
             document.getElementById('modalTimestamp').innerText = timestamp;
             document.getElementById('modalScore').innerText = `Cosine: ${score}`;
             document.getElementById('modalSourceLink').href = sourceLink;
             document.getElementById('modalCaption').innerText = rawCaption ? decodeURIComponent(rawCaption) : "";
+            document.getElementById('modalMetaTag').innerText = `${director || 'George Stevens'} • ${res || '1440x1080 Color'}`;
 
             const nativePlayer = document.getElementById('nativePlayer');
             const modalIframe = document.getElementById('modalIframe');

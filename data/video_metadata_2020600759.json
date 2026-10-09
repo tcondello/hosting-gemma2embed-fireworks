@@ -1,0 +1,109 @@
+{
+  "catalog": {
+    "lccn": "2020600759",
+    "item_url": "https://www.loc.gov/item/2020600759/",
+    "permalink": "https://lccn.loc.gov/2020600759",
+    "digital_id": "mbrs.ntscrm.02531189",
+    "title": "World War II color footage--Stevens and SPECOU in Berlin; Stevens in North Africa and Egypt before D-Day",
+    "alternate_titles": [
+      "Stevens and SPECOU in Berlin",
+      "Stevens in North Africa and Egypt before D-Day"
+    ],
+    "dates": ["1943", "1945"],
+    "date_display": "1943 - 1945",
+    "national_film_registry": true,
+    "national_film_registry_note": "The entire collection of George Stevens' World War II footage was selected to the National Film Registry as an essential visual record of World War II.",
+    "contributors": [
+      {
+        "name": "George Stevens",
+        "role": "Director / Unit Commander (Lt. Col., U.S. Army Signal Corps)",
+        "loc_authority": "https://www.loc.gov/search/?fa=contributor:stevens,+george&fo=json"
+      },
+      {
+        "name": "United States. Army. Signal Corps. Special Coverage Unit (SPECOU)",
+        "role": "Military Production Unit",
+        "loc_authority": "https://www.loc.gov/search/?fa=contributor:united+states.+army.+signal+corps.+special+coverage+unit&fo=json"
+      },
+      {
+        "name": "William C. Mellor",
+        "role": "Cinematographer",
+        "loc_authority": "https://www.loc.gov/search/?fa=subject:mellor,+william+c.&fo=json"
+      },
+      {
+        "name": "Bill Hamilton",
+        "role": "Cinematographer / Sound Recorder",
+        "loc_authority": "https://www.loc.gov/search/?fa=subject:hamilton,+bill&fo=json"
+      },
+      {
+        "name": "Hollingsworth Morse",
+        "role": "Cinematographer / Assistant",
+        "loc_authority": "https://www.loc.gov/search/?fa=subject:morse,+hollingsworth&fo=json"
+      }
+    ],
+    "summary": "In late summer 1945, Stevens and the SPECOU visit Berlin. They visit various buildings and historic sites, including the Olympic Stadium. Berlin is heavily damaged. Civilians clean up the rubble. Refugees are leaving with their belongings. Hamilton and Morse visit the Russian Sector. Multiple groups of Russian troops walk and march through town. Some recreational activities are shown--relaxing at the beach, golfing, visiting the racetrack. In the second half of the film, there are out of sequence shots of North Africa and Egypt, filmed in 1943 before D-Day. Stevens and Mellor visit the Sphinx. American military action is staged in the African desert. Unidentified troops march in the desert.",
+    "historical_notes": [
+      "During World War II, Academy Award-winning film director George Stevens was commissioned as an officer in the United States Army Signal Corps.",
+      "After spending six months in North Africa and Egypt, he was directed in late 1943 by General Dwight D. Eisenhower to organize a Special Coverage Unit (SPECOU) of 45 cameramen and sound recorders to photograph the Americans landing in Europe on D-Day.",
+      "The unit was embedded with American and Allied troops as they moved through France, Luxembourg, Belgium and Germany.",
+      "Shot on 16mm Kodachrome color film, this footage represents one of the only comprehensive, full-color visual archives of the European and North African theaters during WWII.",
+      "Sources used: Five Came Back by Mark Harris; 'Lt. Col. George C. Stevens, World War II color film' document in NAVCC acquisition file, ACQ: Stevens, George (Jr.)."
+    ],
+    "subjects": [
+      "World War, 1939-1945",
+      "Berlin (Germany) -- Destruction and pillage",
+      "Egypt -- Giza -- Great Sphinx and Pyramids",
+      "North Africa campaign",
+      "Reichstag (Berlin, Germany)",
+      "Olympiastadion (Berlin, Germany)",
+      "Civilians in war & Refugees",
+      "Soviet Union military personnel in Berlin",
+      "Tanks and military armor in desert maneuvers",
+      "United States Army Signal Corps",
+      "Kodachrome motion picture film"
+    ],
+    "medium": "1 video file (digital) (34 min.) : si., col. (digitized 16mm/35mm transfer)",
+    "repository": "Library of Congress Motion Picture, Broadcasting, and Recorded Sound Division, Washington, D.C. 20540 USA",
+    "rights_advisory": "No known restrictions on publication. Work of the U.S. Federal Government (U.S. Army Signal Corps) / Public Domain."
+  },
+  "technical_stream": {
+    "container_format": "MPEG-4 (Base Media / Version 1 / ISO 14496-14)",
+    "file_size_bytes": 935509658,
+    "file_size_mb": 892.17,
+    "duration_seconds": 2393.536,
+    "duration_formatted": "00:39:53.54 (39m 54s)",
+    "overall_bitrate_kbps": 3126,
+    "video_stream": {
+      "codec_name": "h264",
+      "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+      "profile": "Main",
+      "width": 1440,
+      "height": 1080,
+      "pixel_aspect_ratio": "1:1",
+      "display_aspect_ratio": "4:3",
+      "frame_rate_fps": 24.0,
+      "pixel_format": "yuv420p (tv, bt709, progressive)",
+      "bitrate_kbps": 2998
+    },
+    "audio_stream": {
+      "codec_name": "aac",
+      "codec_long_name": "AAC (Advanced Audio Coding)",
+      "profile": "LC",
+      "sample_rate_hz": 48000,
+      "channels": 2,
+      "channel_layout": "stereo",
+      "bitrate_kbps": 125
+    },
+    "cdn_source_url": "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02531189/02531189.mp4"
+  },
+  "vector_indexing": {
+    "pinecone_index": "rick-morty-gemma2-video",
+    "pinecone_namespace": "loc-ww2-color",
+    "granularity_seconds": 4.0,
+    "total_clips": 598,
+    "embedding_dimension": 768,
+    "embedding_model": "text-embedding-3-small (dimensions=768) + gpt-4o-mini low-detail visual grounding",
+    "multimodal_compatibility": "Shared 768-dim hypersphere matching EmbeddingGemma 2 / Google DeepMind multimodal space",
+    "metric": "cosine",
+    "parquet_export_file": "data/pinecone_export/loc_ww2_color/ww2_color_stevens_embeddings.parquet"
+  }
+}
