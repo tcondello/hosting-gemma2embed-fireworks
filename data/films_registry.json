@@ -21,5 +21,15 @@
     "frame_count": 403,
     "loc_item_url": "https://www.loc.gov/item/2020600753/",
     "stream_url": "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02531085/02531085.mp4"
+  },
+  {
+    "id": "nara_483301384",
+    "title": "Iwo Jima Flag Raising",
+    "year": "1945",
+    "duration_sec": 24.0,
+    "frame_count": 24,
+    "loc_item_url": "https://catalog.archives.gov/id/483301384",
+    "stream_url": "https://catalog.archives.gov/medialz/mopix/127/R/127-r-3224.mp4",
+    "archive": "National Archives (NARA)"
   }
 ]
