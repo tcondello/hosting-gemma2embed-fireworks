@@ -57,19 +57,19 @@
     <main class="max-w-7xl mx-auto px-6 py-8 flex-1 w-full">
         <!-- Film Quick Metadata Banner -->
         <div class="max-w-4xl mx-auto mb-8 bg-slate-900/60 border border-slate-800/90 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 text-xs">
-            <div class="flex items-center gap-3">
-                <span class="px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 mono">LCCN 2020600759</span>
+            <div class="flex items-center gap-3 flex-wrap">
+                <span class="px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 mono">2 LOC Films</span>
                 <span class="text-slate-300"><i class="fa-solid fa-user-tie text-amber-400 mr-1"></i> Dir: <b>George Stevens</b> (SPECOU)</span>
                 <span class="text-slate-400 hidden sm:inline">•</span>
-                <span class="text-slate-300 hidden sm:inline"><i class="fa-solid fa-camera text-blue-400 mr-1"></i> <b>William C. Mellor</b></span>
+                <span class="text-slate-300"><i class="fa-solid fa-film text-blue-400 mr-1"></i> Berlin & Africa (2020600759) + Elbe River (2020600753)</span>
                 <span class="text-slate-400 hidden md:inline">•</span>
                 <span class="text-slate-300 hidden md:inline"><i class="fa-solid fa-calendar text-emerald-400 mr-1"></i> <b>1943 & 1945</b></span>
             </div>
             <div class="flex items-center gap-2">
-                <span class="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-medium">1440x1080 HD Kodachrome</span>
+                <span class="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-medium">1,001 HD Keyframes</span>
                 <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-medium">National Film Registry</span>
-                <a href="https://www.loc.gov/item/2020600759/" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1 font-semibold">
-                    <span>LOC.gov</span>
+                <a href="https://www.loc.gov/item/2020600753/" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1 font-semibold">
+                    <span>LOC Elbe Item</span>
                     <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
                 </a>
             </div>
@@ -78,10 +78,10 @@
         <!-- Hero Section -->
         <div class="text-center max-w-3xl mx-auto mb-6">
             <h2 class="text-4xl font-extrabold tracking-tight mb-3 text-white">
-                Search 40 Minutes of <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">WWII Color Footage</span>
+                Search Over 1 Hour of <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">WWII Color Footage</span>
             </h2>
             <p class="text-slate-400 text-sm mb-6">
-                Type natural queries to search across authentic 16mm Kodachrome film using live <b>Google DeepMind EmbeddingGemma 2</b> neural network vectors.
+                Type natural queries to search across 1,001 scenes from authentic 16mm Kodachrome films using live <b>Google DeepMind EmbeddingGemma 2</b> neural network vectors.
             </p>
 
             <!-- Search Form -->
@@ -90,7 +90,7 @@
                     <i class="fa-solid fa-magnifying-glass absolute left-4 text-amber-400 text-lg"></i>
                     <input type="text" id="searchInput" 
                         class="w-full pl-12 pr-32 py-4 bg-slate-900 border border-slate-700 rounded-2xl text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 amber-glow transition text-base"
-                        placeholder="Search any scene (e.g. 'cars', 'soldiers marching', 'desert tanks')..." 
+                        placeholder="Search any scene (e.g. 'soldiers shaking hands at elbe river', 'desert tanks', 'cars')..." 
                         value="" autocomplete="off" required>
                     <button type="submit" id="searchBtn"
                         class="absolute right-2 px-6 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold rounded-xl transition flex items-center gap-2 text-sm shadow-lg shadow-amber-500/20">
@@ -114,14 +114,13 @@
             <!-- Curated Suggestion Pills -->
             <div id="chipsContainer" class="flex flex-wrap items-center justify-center gap-2 text-xs">
                 <span class="text-slate-500">Quick Topics:</span>
+                <button type="button" onclick="setQuery('american and soviet soldiers meeting at elbe river in torgau')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🤝 Elbe River Link-Up</button>
+                <button type="button" onclick="setQuery('soldiers shaking hands smiling celebrating peace')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">✌️ Handshake & Celebration</button>
                 <button type="button" onclick="setQuery('cars')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🚗 Cars & Jeeps</button>
                 <button type="button" onclick="setQuery('bombed reichstag ruins and destruction in berlin')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">💥 Reichstag Ruins</button>
                 <button type="button" onclick="setQuery('russian soviet soldiers marching in berlin')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🎖️ Soviet Troops</button>
                 <button type="button" onclick="setQuery('tanks and military armor driving through desert sand')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🛡️ Desert Tanks</button>
                 <button type="button" onclick="setQuery('great sphinx and pyramids of giza in egypt')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🏛️ Great Sphinx & Pyramids</button>
-                <button type="button" onclick="setQuery('civilians and refugees carrying luggage and carts')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">🚶 Berlin Refugees</button>
-                <button type="button" onclick="setQuery('american pilots and aircraft on airfield')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">✈️ Airfield Pilots</button>
-                <button type="button" onclick="setQuery('officers relaxing playing golf')" class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 hover:border-amber-500 text-slate-300 hover:text-amber-400 transition">⛳ Golfing Officers</button>
             </div>
         </div>
 
@@ -395,18 +394,18 @@
         let PRECOMPUTED_QUERIES = {};
         let FILMS_REGISTRY = [];
 
-        // 6 Curated sample frames showing the full diversity of the film on initial load
-        const FEATURED_INDICES = [170, 230, 108, 326, 473, 261];
+        // 6 Curated sample frames showing the full diversity across both films on initial load
+        const FEATURED_INDICES = [170, 230, 108, 620, 750, 890];
 
         async function initApp() {
             try {
                 const statElem = document.getElementById('statVectors');
 
                 const [metaRes, queryRes, binRes, filmsRes] = await Promise.all([
-                    fetch('data/frames_metadata.json?v=4').then(r => r.json()),
-                    fetch('data/precomputed_queries.json?v=4').then(r => r.json()),
-                    fetch('data/vectors.bin?v=4').then(r => r.arrayBuffer()),
-                    fetch('data/films_registry.json?v=4').then(r => r.json()).catch(() => [])
+                    fetch('data/frames_metadata.json?v=5').then(r => r.json()),
+                    fetch('data/precomputed_queries.json?v=5').then(r => r.json()),
+                    fetch('data/vectors.bin?v=5').then(r => r.arrayBuffer()),
+                    fetch('data/films_registry.json?v=5').then(r => r.json()).catch(() => [])
                 ]);
 
                 FRAMES_METADATA = metaRes;

@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 import numpy as np
 import torch
+from PIL import Image
 from sentence_transformers import SentenceTransformer
 
 
@@ -45,15 +46,30 @@ def fetch_loc_item_metadata(item_id_or_url: str) -> Dict[str, Any]:
     headers = {"User-Agent": "LOC-Video-Pipeline/2.0 (Historical Archive Search)"}
     print(f"[*] Querying LOC metadata API: {api_url}")
 
-    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-        resp = client.get(api_url, headers=headers)
-        if resp.status_code != 200:
-            raise RuntimeError(f"LOC API responded with HTTP {resp.status_code}")
-        data = resp.json()
+    data = None
+    try:
+        with httpx.Client(timeout=45.0, follow_redirects=True) as client:
+            resp = client.get(api_url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+    except Exception as e:
+        print(f"[*] httpx timed out or failed ({e}), falling back to curl...")
+
+    if not data:
+        curl_cmd = ["curl", "-s", "-L", api_url]
+        res = subprocess.run(curl_cmd, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout:
+            data = json.loads(res.stdout)
+        else:
+            raise RuntimeError(f"Failed to fetch metadata for LOC item {clean_id}")
 
     item_info = data.get("item", {})
-    title = item_info.get("title", data.get("title", f"LOC Video {clean_id}"))
-    date = item_info.get("date", data.get("date", "Unknown"))
+    raw_title = item_info.get("title") or data.get("title") or f"LOC Video {clean_id}"
+    if isinstance(raw_title, list):
+        raw_title = raw_title[0]
+    title = raw_title.strip("[]")
+
+    date = item_info.get("date") or data.get("date") or "Unknown"
     description_list = item_info.get("notes", []) or data.get("description", [])
     summary = " ".join(description_list) if isinstance(description_list, list) else str(description_list)
     summary = re.sub(r"\s+", " ", summary).strip()
@@ -73,6 +89,24 @@ def fetch_loc_item_metadata(item_id_or_url: str) -> Dict[str, Any]:
                 break
         if mp4_url:
             break
+
+    # If no explicit MP4 in resources, check for ntscrm identifier pattern
+    if not mp4_url:
+        for res in resources:
+            for file_group in res.get("files", []):
+                for f in file_group:
+                    url = f.get("url", "")
+                    m = re.search(r"/ntscrm/(\d+)/", url)
+                    if m:
+                        candidate = f"https://tile.loc.gov/storage-services/service/mbrs/ntscrm/{m.group(1)}/{m.group(1)}.mp4"
+                        # Verify candidate via curl HEAD
+                        check = subprocess.run(["curl", "-s", "-I", candidate], capture_output=True, text=True)
+                        if "200" in check.stdout or "302" in check.stdout:
+                            mp4_url = candidate
+                            print(f"[+] Discovered active MP4 stream via ntscrm registry: {candidate}")
+                            break
+                if mp4_url:
+                    break
 
     if not mp4_url:
         raise ValueError(f"Could not locate a direct MP4 stream URL for LOC item {clean_id}")
@@ -134,25 +168,14 @@ def embed_keyframes_gemma2(
     batch_size: int = 32,
     device: str = "mps",
 ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
-    """Generates 768-dim normalized embeddings using EmbeddingGemma 2."""
-    texts = []
+    """Generates 768-dim normalized embeddings directly from keyframe images using Gemma 2."""
     metadata_list = []
-
     clean_title = meta["title"].replace('"', "'")
     date_str = meta.get("date", "")
     summary_str = meta.get("summary", "")
 
     for idx, (frame_path, start_s) in enumerate(keyframes):
         timecode = format_timestamp(start_s)
-        # Create a rich contextual sentence describing this historical film moment
-        context_desc = (
-            f"Archival historical film: {clean_title} ({date_str}) at {timecode}. "
-            f"Subject: {summary_str[:160]}"
-        )
-        # EmbeddingGemma prompt format
-        embed_prompt = f"task: search result | query: {context_desc}"
-        texts.append(embed_prompt)
-
         metadata_list.append({
             "t": timecode,
             "s": start_s,
@@ -160,18 +183,19 @@ def embed_keyframes_gemma2(
             "vtitle": clean_title,
             "stream": meta["stream_url"],
             "loc_url": meta["loc_item_url"],
-            "c": context_desc,
+            "c": f"{clean_title} ({date_str}) — Recorded at {timecode} • SPECOU 16mm Kodachrome Color",
         })
 
-    print(f"[*] Generating Gemma 2 embeddings for {len(texts)} clips (batch_size={batch_size})...")
+    print(f"[*] Generating Gemma 2 visual embeddings for {len(keyframes)} frames (batch_size={batch_size})...")
     t0 = time.perf_counter()
     all_embeddings = []
 
-    for i in range(0, len(texts), batch_size):
-        chunk = texts[i : i + batch_size]
+    for i in range(0, len(keyframes), batch_size):
+        chunk = keyframes[i : i + batch_size]
+        images = [Image.open(f).convert("RGB") for f, _ in chunk]
         emb = model.encode(
-            chunk,
-            batch_size=len(chunk),
+            images,
+            batch_size=len(images),
             normalize_embeddings=True,
             show_progress_bar=False,
             device=device,
@@ -180,8 +204,8 @@ def embed_keyframes_gemma2(
 
     embeddings_np = np.vstack(all_embeddings).astype(np.float32)
     elapsed = time.perf_counter() - t0
-    rate = len(texts) / elapsed if elapsed > 0 else 0
-    print(f"[+] Encoded {len(texts)} embeddings in {elapsed:.2f}s ({rate:.1f} frames/sec)")
+    rate = len(keyframes) / elapsed if elapsed > 0 else 0
+    print(f"[+] Encoded {len(keyframes)} image frames in {elapsed:.2f}s ({rate:.1f} frames/sec)")
     return embeddings_np, metadata_list
 
 
@@ -294,8 +318,12 @@ def main():
 
     # 2. Extract keyframes
     temp_dir = Path(f"data/temp_extract_{meta['id']}")
+    local_video = Path(f"data/temp_{meta['id']}.mp4")
+    video_source = str(local_video) if local_video.exists() else meta["stream_url"]
+    print(f"[*] Decoding video source: {video_source}")
+
     keyframes = extract_keyframes_ffmpeg(
-        meta["stream_url"],
+        video_source,
         temp_dir,
         interval_s=args.interval,
         max_frames=args.max_frames,
